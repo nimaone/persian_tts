@@ -218,6 +218,11 @@ class OnnxTts:
 
         self.sp = spm.SentencePieceProcessor(model_file=str(BASE / "model" / "v2" / "tokenizer_ph.model"))
         self.rng = np.random.default_rng(seed)
+        # voice prompt KV caches, memoised by (path, mtime): encoding a
+        # reference voice costs ~0.5 s and synthesis runs per SENTENCE —
+        # a 6-sentence paragraph paid it 6 times. Entries are ~19 MB each,
+        # so keep only the most recently used few.
+        self._voice_memo: dict = {}
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         # chunks generate in parallel (4 workers); the models are small and
@@ -256,14 +261,26 @@ class OnnxTts:
             "noise": noise, "cache": cache})
         kv = kv.reshape(self.L, 2, -1, self.H, self.D)
         S = kv.shape[2]
-        cache = cache.copy()
+        # write in place: every caller owns its cache exclusively (the
+        # shared voice cache is copied per attempt in _generate_with_retry)
+        # — a defensive copy here cost ~5.4 ms x ~45 steps per chunk
         cache[:, :, offset : offset + S] = kv
         return lat, eos, cache, offset + S
 
     def voice_cache(self, wav_path):
-        """Voice prompt -> seeded flow KV cache. Pure ONNX + numpy."""
+        """Voice prompt -> seeded flow KV cache. Pure ONNX + numpy.
+        Memoised by (path, mtime): the returned cache is SHARED and must
+        never be written to — callers copy it before generating (they do:
+        _generate_with_retry copies per attempt)."""
         import soundfile as sf
         from scipy.signal import resample_poly
+
+        p = Path(wav_path)
+        key = (str(p.resolve()), p.stat().st_mtime)
+        hit = self._voice_memo.pop(key, None)
+        if hit is not None:
+            self._voice_memo[key] = hit  # refresh recency
+            return hit
 
         audio, sr = sf.read(wav_path)
         if audio.ndim > 1:
@@ -272,6 +289,10 @@ class OnnxTts:
         if sr != self.sample_rate:
             g = np.gcd(int(sr), self.sample_rate)
             audio = resample_poly(audio, self.sample_rate // g, sr // g).astype(np.float32)
+        # model card: prompts beyond 5 s are out of distribution (the
+        # upload endpoint already trims; this guards the CLI/engine path)
+        if len(audio) > 5 * self.sample_rate:
+            audio = audio[: 5 * self.sample_rate]
 
         lat = self.s_enc.run(None, {"audio": audio[None, None, :]})[0]  # [1,T,ldim]
         cond = (lat[0] @ self.spk_proj.T).astype(np.float32)            # [T,dim]
@@ -281,6 +302,9 @@ class OnnxTts:
         _, _, cache, off = self._flow_step(
             np.zeros((1, 0, self.ldim), np.float32), text_emb, 0,
             np.zeros((1, self.ldim), np.float32), cache)
+        self._voice_memo[key] = (cache, off)
+        while len(self._voice_memo) > 4:
+            self._voice_memo.pop(next(iter(self._voice_memo)))
         return cache, off
 
     # ------------------------------------------------------------------
@@ -543,6 +567,22 @@ class OnnxTts:
                                  stretch_factor=pace).reshape(-1)
         return audio.astype(np.float32)
 
+    @staticmethod
+    def _window_mean(x: np.ndarray, w: int) -> np.ndarray:
+        """'same'-mode moving average in O(n): np.convolve with a w-sample
+        kernel is O(n*w) — ~0.4 s on 20 s of audio — and this runs on every
+        retry attempt and again when stitching. Output length is always
+        len(x) (np.convolve 'same' returns max(len(x), w), which let index
+        math run past the signal on inputs shorter than the window)."""
+        n = len(x)
+        c = np.concatenate(([0.0], np.cumsum(x.astype(np.float64))))
+        k = np.arange(n + w - 1)
+        lo = np.maximum(k - w + 1, 0)
+        hi = np.minimum(k + 1, n)
+        full = (c[hi] - c[lo]) / w
+        start = (w - 1) // 2
+        return full[start: start + n].astype(np.float32)
+
     def _dead_air_regions(self, p, rel_floor=0.03, win=0.25, density=0.90):
         """Spans of dead air the model inserted mid-chunk, as (start, end)
         sample indices. Windowed quiet-density based: the model scatters
@@ -556,8 +596,7 @@ class OnnxTts:
         sr = self.sample_rate
         quiet = np.abs(p) < rel_floor * rms
         w = max(1, int(win * sr))
-        dens = np.convolve(quiet.astype(np.float32),
-                           np.ones(w, np.float32) / w, mode="same")
+        dens = self._window_mean(quiet.astype(np.float32), w)
         solid = dens >= density
         edges = np.diff(np.concatenate(([0], solid.astype(np.int8), [0])))
         starts, ends = np.where(edges == 1)[0], np.where(edges == -1)[0]
@@ -662,8 +701,7 @@ class OnnxTts:
         loud = np.abs(p) >= rel_floor * rms
         # windowed: a position is speech if >=60% of its 2*min_run window is loud
         w = max(1, int(min_run * self.sample_rate))
-        kernel = np.ones(2 * w) / (2 * w)
-        dens = np.convolve(loud.astype(np.float32), kernel, mode="same")
+        dens = self._window_mean(loud.astype(np.float32), 2 * w)
         solid = dens >= 0.6
         idx = np.where(solid)[0]
         if len(idx) == 0:
