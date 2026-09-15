@@ -193,7 +193,10 @@ def plan_phrases(sentence: str, g2p) -> list[tuple[str, float]]:
 
 
 class OnnxTts:
-    def __init__(self, pkg_dir=PKG, seed=0):
+    def __init__(self, pkg_dir=PKG, seed=None):
+        # seed=None draws OS entropy: every run differs, so the README's
+        # "rebuild a bad generation" advice actually works. Pass an int
+        # (CLI --seed) to reproduce a run exactly.
         self.dir = Path(pkg_dir)
         man = json.loads((self.dir / "manifest.json").read_text(encoding="utf-8"))
         c = man["constants"]
@@ -215,7 +218,6 @@ class OnnxTts:
 
         self.sp = spm.SentencePieceProcessor(model_file=str(BASE / "model" / "v2" / "tokenizer_ph.model"))
         self.rng = np.random.default_rng(seed)
-
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
         # chunks generate in parallel (4 workers); the models are small and
@@ -762,11 +764,16 @@ class OnnxTts:
 
 def main():
     args = sys.argv[1:]
+    seed = None
+    if "--seed" in args:  # "--seed 42" — reproduce a run exactly
+        i = args.index("--seed")
+        seed = int(args[i + 1])
+        args = args[:i] + args[i + 2:]
     text = args[0] if args else "سلام، حال شما چطور است؟"
     voice = args[1] if len(args) > 1 else str(BASE / "voices" / "female_hello.wav")
     out = args[2] if len(args) > 2 else str(BASE / "output" / "tts_onnx.wav")
 
-    eng = OnnxTts()
+    eng = OnnxTts(seed=seed)
     t0 = time.perf_counter()
     audio = eng.synthesize_text(text, voice)
     dt = time.perf_counter() - t0
