@@ -48,6 +48,10 @@ _engine_lock = threading.Lock()
 _audio_store: dict[str, dict] = {}
 _store_lock = threading.Lock()
 
+# punctuation-aware phrase splitting lives with the engine (single source of
+# truth for where pauses may fall)
+from tts_onnx import split_phrases  # noqa: E402
+
 
 def get_engine():
     global _engine
@@ -116,27 +120,30 @@ def tts(req: TTSRequest):
 
     engine = get_engine()
     pace = float(min(max(req.pace, 0.6), 1.5))
-    sentences = split_sentences(text)
     phonemes_all, chunks = [], []
 
     with _engine_lock:
-        for sent in sentences:
+        for sent in split_sentences(text):
+            # punctuation-aware: each phrase (comma/dash/colon-delimited) is a
+            # pause unit, phonemised separately so chunk boundaries can never
+            # fall mid-phrase while punctuation positions are still visible
             try:
-                # keep ezafe markers so the engine's chunker keeps bound phrases
-                ph = engine._g2p.phonemise(sent, keep_ezafe=True)
+                phs = [engine._g2p.phonemise(p, keep_ezafe=True)
+                       for p in split_phrases(sent)]
             except ValueError as e:
-                # normalize_for_model rejects text it cannot map (e.g. latin-only)
                 raise HTTPException(400, "متن فارسی معتبری پیدا نشد") from e
-            if not ph:
+            phs = [p for p in phs if p]
+            if not phs:
                 continue
             # model card: retry a runaway once (stochastic; 2nd attempt usually ends)
-            tokens = len(engine.sp.encode(ph.replace("1", ""), out_type=int))
+            tokens = sum(len(engine.sp.encode(p.replace("1", ""), out_type=int))
+                         for p in phs)
             cap = tokens / engine.tps_est + engine.gen_pad + 1
             for attempt in range(2):
-                audio = engine.synthesize(ph, voice_path(req.voice), pace=pace)
+                audio = engine.synthesize(phs, voice_path(req.voice), pace=pace)
                 if len(audio) / SR <= cap + 2.0:  # multi-chunk texts run longer
                     break
-            phonemes_all.append(ph.replace("1", ""))
+            phonemes_all.append(" ".join(p.replace("1", "") for p in phs))
             chunks.append(audio)
             chunks.append(np.zeros(int(PAUSE_S / pace * SR), dtype=audio.dtype))
 

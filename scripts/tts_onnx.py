@@ -10,6 +10,7 @@
 # CLI:
 #   python scripts/tts_onnx.py "salAm hAle SomA Cetor ?ast" voices/female_hello.wav out.wav
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -20,6 +21,21 @@ import sentencepiece as spm
 
 BASE = Path(__file__).resolve().parent.parent
 PKG = BASE / "model" / "onnx"
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?؟])\s+")
+_PHRASE_SPLIT = re.compile(r"(?<=[،؛:—–,;:])\s+")
+
+
+def split_sentences(text: str) -> list[str]:
+    return [t.strip() for t in _SENTENCE_SPLIT.split(text.strip()) if t.strip()]
+
+
+def split_phrases(sentence: str) -> list[str]:
+    """Punctuation-aware phrase units. G2P discards punctuation, so a chunker
+    working on phonemes alone cannot see where the writer paused (model card:
+    'anything chunking the result cuts on token count alone'). Splitting the
+    TEXT first keeps commas / dashes / colons as the pause points they are."""
+    return [t.strip() for t in _PHRASE_SPLIT.split(sentence.strip()) if t.strip()]
 
 
 class OnnxTts:
@@ -126,17 +142,30 @@ class OnnxTts:
         return np.concatenate(out, axis=2)[0, 0]
 
     def synthesize_text(self, text, voice_wav, seed=None, pace=1.0):
-        """Persian text OR phonemes -> audio. Persian is auto-detected."""
+        """Persian text OR phonemes -> audio. Persian is auto-detected;
+        Persian text is split into sentences and punctuation-delimited phrases
+        BEFORE phonemisation so pauses land where the writer put them."""
         if any("؀" <= ch <= "ۿ" for ch in text):
             from g2p_onnx import OnnxG2P
 
             if not hasattr(self, "_g2p"):
                 self._g2p = OnnxG2P(self.dir)
-            phonemes = self._g2p.phonemise(text, keep_ezafe=True)
-            print(f"phonemes: {phonemes}")
-        else:
-            phonemes = text
-        return self.synthesize(phonemes, voice_wav, seed=seed, pace=pace)
+            # per-sentence phrase lists; sentence pauses (0.28s) stay longer
+            # than comma/phrase pauses (0.20s), mirroring the server pipeline
+            sentences = []
+            for sent in split_sentences(text):
+                phs = [self._g2p.phonemise(p, keep_ezafe=True)
+                       for p in split_phrases(sent)]
+                phs = [p for p in phs if p]
+                if phs:
+                    sentences.append(phs)
+            print("phonemes:", " ".join(" ".join(s) for s in sentences))
+            parts, silence = [], np.zeros(int(0.28 * self.sample_rate), np.float32)
+            for phs in sentences:
+                parts.append(self.synthesize(phs, voice_wav, pace=pace))
+                parts.append(silence)
+            return np.concatenate(parts[:-1]) if len(parts) > 1 else parts[0]
+        return self.synthesize(text, voice_wav, seed=seed, pace=pace)
 
     def chunk_phonemes(self, phonemes: str, max_tokens: int = 18) -> list[str]:
         """Word-boundary packing of a phoneme string into model-sized chunks.
@@ -152,12 +181,15 @@ class OnnxTts:
             candidate = " ".join(cur + [w])
             n = len(self.sp.encode(candidate, out_type=int))
             over = cur and n > max_tokens
-            ezafe_guard = cur and cur[-1].endswith("1")
-            if over and not ezafe_guard:
+            bound = (
+                (cur and cur[-1].endswith("1"))   # marked ezafe pair
+                or w in self._LIGHT_VERBS          # compound verb ("Sekannde miSavad")
+            )
+            if over and not bound:
                 chunks.append(" ".join(cur))
                 cur = [w]
             else:
-                # ezafe pair must stay together even if slightly over budget
+                # bound pairs stay together even if slightly over budget
                 cur = cur + [w]
         if cur:
             chunks.append(" ".join(cur))
@@ -181,6 +213,16 @@ class OnnxTts:
     # Conjunctions bind to their LEFT operand ("A va B"): a chunk must not
     # start with one, or the coordinated pair is split by the chunk pause.
     _CONJUNCTIONS = {"va", "yA", "vali", "amA", "hattA", "ke"}
+    # Persian light verbs complete the previous word's compound verb
+    # ("Sekannde miSavad"); breaking right before one splits the verb.
+    _LIGHT_VERBS = {
+        "miSavad", "miSavand", "miSavam", "miSavid", "miSavim",
+        "Savad", "Savand", "Sod", "Sodand", "Sodan",
+        "mikonad", "mikonand", "mikonam", "mikonid", "mikonim",
+        "kard", "karde", "konad", "konand",
+        "dahad", "dahand", "dad", "dade",
+        "dArad", "dArand", "dAsht", "Ast", "?ast", "bud", "budand",
+    }
 
     def _fix_boundaries(self, chunks: list[str], min_words: int = 3) -> list[str]:
         """Move words across chunk boundaries so no boundary splits a bound
@@ -217,27 +259,41 @@ class OnnxTts:
         return chunks
 
     def synthesize(self, phonemes, voice_wav, seed=None, pace=1.0):
-        """phonemes: romanised phoneme string (may carry ezafe "1" markers).
-        Long inputs are chunked at ~18 tokens; each chunk is generated from the
-        voice state and decoded fresh. `pace` (0.6..1.5) time-stretches the
-        final audio uniformly — words AND pauses — so slower speech keeps its
-        natural rhythm instead of just lengthening silences."""
+        """phonemes: a phoneme string OR a list of phrase strings. In list mode
+        every phrase is a pause unit (punctuation-aware splitting is done in
+        the text layer); a phrase longer than ~18 tokens is sub-chunked. Each
+        chunk is generated from the pristine voice state (mirrors production:
+        copy_state=True — a continued 100+ position context is out of
+        distribution and causes early EOS = dropped words). `pace`
+        (0.6..1.5) time-stretches the final audio uniformly."""
         pace = float(np.clip(pace, 0.6, 1.5))
         if seed is not None:
             self.rng = np.random.default_rng(seed)
         voice_cache, voice_off = self.voice_cache(voice_wav)
 
-        parts = []
-        for chunk in self.chunk_phonemes(phonemes):
-            # Each chunk starts from the PRISTINE voice-conditioned state.
-            # This mirrors production exactly: generate_audio passes
-            # copy_state=True, so every chunk deep-copies the original voice
-            # state instead of continuing the previous chunk's cache. Feeding
-            # the model a continued 100+ position context is out of
-            # distribution (training utterances averaged ~11 tokens) and
-            # causes early EOS = dropped words.
-            parts.append(self._generate_with_retry(voice_cache, voice_off, chunk))
-        audio = self._stitch(parts)
+        if isinstance(phonemes, str):
+            phrases = [phonemes]
+        else:
+            phrases = [p for p in phonemes if p.strip()]
+        # very short lead-ins (<4 words) read badly as standalone chunks —
+        # merge them forward into the next phrase
+        merged: list[str] = []
+        for p in phrases:
+            if merged and len(merged[-1].split()) < 4:
+                merged[-1] += " " + p
+            else:
+                merged.append(p)
+        if len(merged) >= 2 and len(merged[-1].split()) < 4:
+            merged[-2] += " " + merged.pop()
+        phrases = merged
+
+        segments = []  # (audio, gap_before_seconds)
+        for pi, phrase in enumerate(phrases):
+            for ci, chunk in enumerate(self.chunk_phonemes(phrase)):
+                audio = self._generate_with_retry(voice_cache, voice_off, chunk)
+                gap = 0.0 if (pi == 0 and ci == 0) else (0.20 if ci == 0 else 0.12)
+                segments.append((audio, gap))
+        audio = self._stitch(segments)
         if abs(pace - 1.0) >= 0.03:
             from pedalboard import time_stretch
 
@@ -290,17 +346,20 @@ class OnnxTts:
         end = min(len(p), idx[-1] + int(tail_keep * sr))
         return start, end
 
-    def _stitch(self, parts, gap=0.15):
+    def _stitch(self, segments, chunk_gap=0.12, phrase_gap=0.20):
         """Join chunk audios into one continuous-sounding piece: loudness
         matched to the first chunk (each chunk is generated fresh and their
-        levels differ by up to ~1.6x), 8 ms declick fades, and a fixed short
-        pause instead of the variable 1-2 s of model-generated dead air."""
-        if not parts:
+        levels differ by up to ~1.6x), 8 ms declick fades, and fixed short
+        pauses instead of the variable 1-2 s of model-generated dead air.
+        `segments` is a list of (audio, gap_before) pairs — a phrase start
+        (punctuation position) gets a slightly longer pause than an
+        intra-phrase chunk boundary."""
+        if not segments:
             return np.zeros(0, dtype=np.float32)
-        target = float(np.sqrt((parts[0] ** 2).mean()))
+        target = float(np.sqrt((segments[0][0] ** 2).mean()))
         f = max(1, int(0.008 * self.sample_rate))
         out = []
-        for i, p in enumerate(parts):
+        for p, gap in segments:
             rms = float(np.sqrt((p ** 2).mean()))
             if rms > 1e-6:
                 p = p * float(np.clip(target / rms, 0.75, 1.35))
@@ -308,7 +367,7 @@ class OnnxTts:
                 p = p.copy()
                 p[:f] *= np.linspace(0.0, 1.0, f, dtype=np.float32)
                 p[-f:] *= np.linspace(1.0, 0.0, f, dtype=np.float32)
-            if i:
+            if gap > 0:
                 out.append(np.zeros(int(gap * self.sample_rate), dtype=np.float32))
             out.append(p)
         audio = np.concatenate(out)
@@ -347,33 +406,6 @@ class OnnxTts:
                 out.append(nxt)
                 pos = b + f
         out.append(audio[pos:])
-        return np.concatenate(out)
-
-    def _compress_vec(self, audio, quiet, sr, f, keep_n, max_pause):
-        out = []
-        i = 0
-        n = len(audio)
-        while i < n:
-            if quiet[i]:
-                j = i
-                while j < n and quiet[j]:
-                    j += 1
-                if (j - i) > int(max_pause * sr):
-                    seg = audio[i : min(i + keep_n, j)].copy()
-                    if len(seg) > 2 * f:
-                        seg[-f:] *= np.linspace(1.0, 0.0, f, dtype=np.float32)
-                    out.append(seg)
-                    nxt = audio[j : j + f]
-                    if len(nxt) == f:
-                        nxt = (nxt * np.linspace(0.0, 1.0, f, dtype=np.float32)).astype(np.float32)
-                    out.append(nxt)
-                    i = j + f
-                    continue
-                out.append(audio[i:j])
-                i = j
-            else:
-                out.append(audio[i : i + 1])
-                i += 1
         return np.concatenate(out)
 
     def _generate_chunk(self, cache, off, chunk):
