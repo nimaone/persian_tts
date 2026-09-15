@@ -151,11 +151,16 @@ def merge_leading_light_verbs(phrases: list[str]) -> list[str]:
     return out
 
 
-def plan_phrases(sentence: str, g2p) -> list[tuple[str, float]]:
+def plan_phrases(sentence: str, g2p, tokenizer=None) -> list[tuple[str, float]]:
     """One text sentence -> [(phonemes, gap_before_seconds), ...].
     Punctuation-aware splitting AND tiny-phrase merging happen here, where
     the punctuation is still visible. Gap: 0.20 s at a normal phrase start,
-    0.26 s after a colon/semicolon lead-in — how a reader delivers it."""
+    0.26 s after a colon/semicolon lead-in — how a reader delivers it.
+    `tokenizer` (the engine's SentencePiece model) gates split_long_phrase
+    on the real budget — phoneme TOKENS, not text words: a 10-word phrase
+    of short words is ~17 tokens and fits one chunk, so splitting it only
+    inserted a pause the writer never asked for. Without it, the old
+    word-count heuristic applies."""
     cache: dict[str, bool] = {}
 
     def clean(tp: str) -> bool:
@@ -179,16 +184,22 @@ def plan_phrases(sentence: str, g2p) -> list[tuple[str, float]]:
 
     merged = merge_short_phrases(split_phrases(sentence), keep_standalone=clean)
     merged = merge_leading_light_verbs(merged)
-    tps = [q for tp in merged for q in split_long_phrase(tp)]
     out: list[tuple[str, float]] = []
     prev_tp: str | None = None
-    for tp in tps:
-        ph = g2p.phonemise(tp, keep_ezafe=True)
-        if not ph:
-            continue
-        strong = prev_tp is not None and prev_tp.rstrip().endswith((":", "؛"))
-        out.append((ph, 0.26 if strong else 0.20))
-        prev_tp = tp
+    for tp in merged:
+        ph_tp = g2p.phonemise(tp, keep_ezafe=True)
+        if (tokenizer is not None and ph_tp
+                and len(tokenizer.encode(ph_tp, out_type=int)) <= 20):
+            parts = [tp]          # fits one chunk even with bound-pair slack
+        else:
+            parts = split_long_phrase(tp)
+        for q in parts:
+            ph = ph_tp if q == tp else g2p.phonemise(q, keep_ezafe=True)
+            if not ph:
+                continue
+            strong = prev_tp is not None and prev_tp.rstrip().endswith((":", "؛"))
+            out.append((ph, 0.26 if strong else 0.20))
+            prev_tp = q
     return out
 
 
@@ -339,7 +350,7 @@ class OnnxTts:
             # shorter than sentence pauses (0.28 s), mirroring the server
             sentences = []
             for sent in split_sentences(text):
-                plan = plan_phrases(sent, self._g2p)
+                plan = plan_phrases(sent, self._g2p, self.sp)
                 if plan:
                     sentences.append(plan)
             print("phonemes:", " ".join(" ".join(p for p, _ in s) for s in sentences))
@@ -358,15 +369,11 @@ class OnnxTts:
     # reads far better than "…?az SabakehAye | tasAdofi …").
     _PREPS = {"?az", "bA", "dar", "be", "barAye", "tA", "ruye", "bedune", "vase"}
 
-    def chunk_phonemes(self, phonemes: str, max_tokens: int = 18) -> list[str]:
-        """Word-boundary packing of a phoneme string into model-sized chunks.
-
-        The model is trained on ~11-token utterances; 18 is the safe budget and
-        at 21+ generations stop terminating (model card). Never breaks after an
-        ezafe marker ("1") so bound phrases like "?eqtesAde1 ?AmrikA" stay in
-        one chunk. The "1" is stripped from the returned chunks.
-        """
-        words = [w for w in phonemes.split() if w]
+    def _pack_words(self, words, max_tokens=18) -> list[str]:
+        """Greedy word-boundary packing (the loop body of chunk_phonemes):
+        fill a chunk to max_tokens, keep bound pairs (ezafe "1" / light verb
+        / "rA") together up to max_tokens+2, and on a forced break look back
+        for the best joint. Chunks keep the ezafe marker attached."""
         chunks, cur = [], []
         for w in words:
             candidate = " ".join(cur + [w])
@@ -377,7 +384,7 @@ class OnnxTts:
                 or w in self._LIGHT_VERBS         # compound verb ("Sekannde miSavad")
                 or w == "rA"                      # object marker clings to its noun
             )
-            if over and not (bound and n <= max_tokens + 4):
+            if over and not (bound and n <= max_tokens + 2):
                 # a break is forced — pick the best joint near the overflow:
                 # 1. right after a light verb (it completes its host, and
                 #    what follows starts a fresh unit: "…jadidi miSavad |
@@ -412,12 +419,25 @@ class OnnxTts:
                 cur = cur + [w]
             else:
                 # bound pairs stay together even if slightly over budget
-                # (hard cap +4: a chained run of ezafe heads must not grow
-                # a chunk into runaway territory, 21+ tokens stop terminating)
+                # (hard cap +2: 21+ tokens stop terminating, so the slack
+                # must never reach past 20)
                 cur = cur + [w]
         if cur:
             chunks.append(" ".join(cur))
+        return chunks
+
+    def chunk_phonemes(self, phonemes: str, max_tokens: int = 18) -> list[str]:
+        """Word-boundary packing of a phoneme string into model-sized chunks.
+
+        The model is trained on ~11-token utterances; 18 is the safe budget and
+        at 21+ generations stop terminating (model card). Never breaks after an
+        ezafe marker ("1") so bound phrases like "?eqtesAde1 ?AmrikA" stay in
+        one chunk. The "1" is stripped from the returned chunks.
+        """
+        words = [w for w in phonemes.split() if w]
+        chunks = self._pack_words(words, max_tokens)
         chunks = self._fix_boundaries(chunks)
+        chunks = self._enforce_budget(chunks, max_tokens)
         # a trailing 1-2 token chunk reads badly (the model wants >= a few
         # tokens); merge it into the previous chunk even slightly over
         # budget — but never past 19 tokens (21+ stop terminating)
@@ -428,6 +448,25 @@ class OnnxTts:
                 chunks[-2] = chunks[-2] + " " + chunks[-1]
                 chunks.pop()
         return [c.replace("1", "") for c in chunks]
+
+    def _enforce_budget(self, chunks, max_tokens):
+        """_fix_boundaries moves words across boundaries without checking
+        length, and a moved word can push the receiving chunk past the
+        terminating budget — re-pack any chunk over max_tokens+2 (a
+        19-token chunk was observed in the wild; the old +4 slack allowed
+        22 in theory while 21+ already stop terminating)."""
+        for _ in range(3):
+            if all(len(self.sp.encode(c, out_type=int)) <= max_tokens + 2
+                   for c in chunks):
+                return chunks
+            repacked = []
+            for c in chunks:
+                if len(self.sp.encode(c, out_type=int)) <= max_tokens + 2:
+                    repacked.append(c)
+                else:
+                    repacked.extend(self._pack_words(c.split(), max_tokens))
+            chunks = self._fix_boundaries(repacked)
+        return chunks
 
     # Persian function words that must not dangle at a chunk end: a
     # preposition/conjunction without its object makes the model pause after

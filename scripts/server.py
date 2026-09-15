@@ -128,7 +128,7 @@ def tts(req: TTSRequest):
             # is a pause unit with its own gap, and short lead-ins ending in
             # strong punctuation ("سؤال اصلی:") stay standalone
             try:
-                plan = plan_phrases(sent, engine._g2p)
+                plan = plan_phrases(sent, engine._g2p, engine.sp)
             except ValueError as e:
                 raise HTTPException(400, "متن فارسی معتبری پیدا نشد") from e
             if not plan:
