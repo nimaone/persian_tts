@@ -216,7 +216,6 @@ class OnnxTts:
         self.sample_rate = c["sample_rate"]
         self.steps_per_latent = c["mimi_steps_per_latent"]
         self.temp = c["temp"]
-        self.eos_threshold = c["eos_threshold"]
         self.tps_est = c["tokens_per_second_estimate"]
         self.gen_pad = c["gen_seconds_padding"]
         self.frame_rate = c["frame_rate"]
@@ -515,6 +514,13 @@ class OnnxTts:
         neighbour (an ezafe modifier "…?ettesAlAte1 momken", or a light verb
         "Sekannde miSavad") — that would trade one split for a worse one
         (this is exactly how "اتصالات | ممکن" used to get broken).
+
+        NB: these rules run per PHRASE (chunk_phonemes is called per
+        phrase), so a chunk that OPENS a phrase is deliberately never
+        touched — a leading "و"/"که" there follows the writer's own
+        comma/dash pause, which is normal Persian clause prosody; moving
+        it before the pause would fight the punctuation the plan exists
+        to honour.
         """
         i = 1
         while i < len(chunks):
@@ -750,22 +756,24 @@ class OnnxTts:
         end = min(len(p), idx[-1] + int(tail_keep * sr))
         return start, end
 
-    def _stitch(self, segments, chunk_gap=0.12, phrase_gap=0.20):
+    def _stitch(self, segments):
         """Join chunk audios into one continuous-sounding piece: loudness
-        matched to the first chunk (each chunk is generated fresh and their
-        levels differ by up to ~1.6x), 8 ms declick fades, and fixed short
-        pauses instead of the variable 1-2 s of model-generated dead air.
-        `segments` is a list of (audio, gap_before) pairs — a phrase start
-        (punctuation position) gets a slightly longer pause than an
-        intra-phrase chunk boundary."""
+        matched to the MEDIAN chunk level — chunks are generated fresh and
+        their levels differ by up to ~1.6x, and the first chunk is often a
+        1-word colon lead-in whose level is an outlier — plus 8 ms declick
+        fades and fixed short pauses instead of the variable 1-2 s of
+        model-generated dead air. `segments` is a list of (audio,
+        gap_before) pairs — a phrase start (punctuation position) gets a
+        slightly longer pause than an intra-phrase chunk boundary."""
         if not segments:
             return np.zeros(0, dtype=np.float32)
-        target = float(np.sqrt((segments[0][0] ** 2).mean()))
+        levels = [float(np.sqrt((p ** 2).mean())) for p, _ in segments if len(p)]
+        target = float(np.median(levels)) if levels else 0.0
         f = max(1, int(0.008 * self.sample_rate))
         out = []
         for p, gap in segments:
             rms = float(np.sqrt((p ** 2).mean()))
-            if rms > 1e-6:
+            if rms > 1e-6 and target > 1e-6:
                 p = p * float(np.clip(target / rms, 0.75, 1.35))
             if len(p) > 2 * f:
                 p = p.copy()
