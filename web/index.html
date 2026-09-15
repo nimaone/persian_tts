@@ -1,0 +1,481 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>پارسی‌گو — تبدیل متن فارسی به گفتار</title>
+<style>
+:root{
+  --bg:#0c0e13; --surface:#141824; --surface-2:#1a1f2e; --border:#252b3d;
+  --text:#edeef2; --muted:#8f96a8; --faint:#5c6275;
+  --accent:#ff7a59; --accent-2:#ffb454;
+  --grad:linear-gradient(90deg,var(--accent),var(--accent-2));
+  --radius:14px; --radius-s:10px;
+  --shadow:0 12px 40px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  background:var(--bg); color:var(--text);
+  font-family:"Vazirmatn","Segoe UI",Tahoma,sans-serif;
+  line-height:1.8; -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+.orb{position:fixed;border-radius:50%;filter:blur(110px);opacity:.16;pointer-events:none;z-index:0}
+.orb.a{width:420px;height:420px;background:var(--accent);top:-160px;left:-120px}
+.orb.b{width:380px;height:380px;background:var(--accent-2);bottom:-180px;right:-100px;opacity:.10}
+
+.wrap{position:relative;z-index:1;max-width:1060px;margin:0 auto;padding:28px 22px 60px}
+
+/* ---------- header ---------- */
+header{display:flex;align-items:center;gap:14px;margin-bottom:30px}
+.logo{width:44px;height:44px;border-radius:12px;background:var(--grad);
+  display:grid;place-items:center;flex-shrink:0;box-shadow:0 6px 20px rgba(255,122,89,.35)}
+.logo svg{width:24px;height:24px}
+h1{font-size:22px;font-weight:800;letter-spacing:-.3px}
+.sub{font-size:12.5px;color:var(--muted);margin-top:-4px}
+.badge{margin-inline-start:auto;font-size:11.5px;color:var(--accent-2);
+  border:1px solid rgba(255,180,84,.28);background:rgba(255,180,84,.07);
+  padding:5px 12px;border-radius:99px;white-space:nowrap}
+
+/* ---------- layout ---------- */
+.grid{display:grid;grid-template-columns:1fr 316px;gap:18px;align-items:start}
+@media(max-width:860px){.grid{grid-template-columns:1fr}}
+
+.panel{background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--radius);padding:20px}
+
+.label{font-size:13px;font-weight:700;color:var(--muted);margin-bottom:10px;display:flex;justify-content:space-between}
+.label .cnt{font-weight:400;color:var(--faint);font-size:12px}
+
+textarea{
+  width:100%;min-height:150px;resize:vertical;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-s);
+  color:var(--text);font:inherit;font-size:15.5px;padding:14px 16px;outline:none;
+  transition:border-color .2s;
+}
+textarea:focus{border-color:rgba(255,122,89,.55)}
+textarea::placeholder{color:var(--faint)}
+
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.chip{font-size:12.5px;color:var(--muted);background:transparent;
+  border:1px solid var(--border);border-radius:99px;padding:5px 13px;cursor:pointer;
+  transition:all .18s}
+.chip:hover{color:var(--text);border-color:var(--accent)}
+
+/* ---------- voices ---------- */
+.vcard{display:flex;align-items:center;gap:12px;width:100%;text-align:right;
+  background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-s);
+  padding:11px 13px;margin-bottom:9px;cursor:pointer;transition:all .18s;font:inherit;color:var(--text)}
+.vcard:hover{border-color:#39415c}
+.vcard.sel{border-color:var(--accent);background:rgba(255,122,89,.07)}
+.vcard .ic{width:38px;height:38px;border-radius:50%;flex-shrink:0;
+  display:grid;place-items:center;background:var(--surface);border:1px solid var(--border)}
+.vcard.sel .ic{background:var(--grad);border:none}
+.vcard .ic svg{width:17px;height:17px}
+.vcard .nm{font-size:13.5px;font-weight:700}
+.vcard .ds{font-size:11.5px;color:var(--muted);margin-top:-3px}
+
+.drop{margin-top:6px;border:1.5px dashed var(--border);border-radius:var(--radius-s);
+  padding:15px;text-align:center;font-size:12.5px;color:var(--muted);cursor:pointer;transition:all .2s}
+.drop:hover,.drop.over{border-color:var(--accent);color:var(--text);background:rgba(255,122,89,.04)}
+.drop b{color:var(--accent-2);font-weight:600}
+
+/* ---------- pace ---------- */
+.pace-row{display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap}
+.plabel{font-size:13px;font-weight:700;color:var(--muted)}
+.pchips{display:flex;gap:6px}
+.pchip{font-size:11.5px;color:var(--muted);background:transparent;border:1px solid var(--border);
+  border-radius:99px;padding:4px 11px;cursor:pointer;transition:all .18s;font-family:inherit}
+.pchip:hover{color:var(--text)}
+.pchip.sel{color:#231303;background:var(--grad);border-color:transparent;font-weight:700}
+input[type=range]{flex:1;min-width:120px;appearance:none;-webkit-appearance:none;height:5px;
+  border-radius:99px;background:var(--surface-2);outline:none;direction:ltr}
+input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:17px;height:17px;
+  border-radius:50%;background:var(--grad);cursor:pointer;border:2.5px solid var(--bg);
+  box-shadow:0 2px 10px rgba(255,122,89,.5)}
+input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--accent);
+  cursor:pointer;border:2.5px solid var(--bg)}
+.pval{font-size:12.5px;color:var(--accent-2);font-variant-numeric:tabular-nums;min-width:44px;text-align:center}
+
+/* ---------- generate ---------- */
+.go{width:100%;margin-top:16px;border:none;border-radius:var(--radius-s);cursor:pointer;
+  background:var(--grad);color:#231303;font:inherit;font-size:15.5px;font-weight:800;
+  padding:14px;display:flex;align-items:center;justify-content:center;gap:10px;
+  box-shadow:0 8px 24px rgba(255,122,89,.3);transition:transform .15s,box-shadow .15s}
+.go:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 12px 30px rgba(255,122,89,.4)}
+.go:disabled{opacity:.75;cursor:wait}
+.go svg{width:19px;height:19px}
+
+.eq{display:none;gap:3px;align-items:flex-end;height:18px}
+.eq i{width:3.5px;background:#231303;border-radius:2px;animation:eq 1s ease-in-out infinite}
+.eq i:nth-child(1){height:8px;animation-delay:0s}.eq i:nth-child(2){height:16px;animation-delay:.15s}
+.eq i:nth-child(3){height:11px;animation-delay:.3s}.eq i:nth-child(4){height:15px;animation-delay:.45s}
+@keyframes eq{0%,100%{transform:scaleY(.4)}50%{transform:scaleY(1)}}
+.busy .eq{display:flex}.busy .tx{display:none}
+
+/* ---------- result ---------- */
+.result{margin-top:18px;display:none;animation:rise .4s ease}
+.result.show{display:block}
+@keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+
+.ph{direction:ltr;text-align:left;font-family:"Cascadia Code",Consolas,monospace;
+  font-size:12.5px;color:var(--accent-2);background:rgba(255,180,84,.05);
+  border:1px solid rgba(255,180,84,.15);border-radius:var(--radius-s);
+  padding:9px 14px;margin-bottom:14px;word-break:break-all;line-height:1.7}
+.ph span{color:var(--faint)}
+
+.player{display:flex;align-items:center;gap:14px}
+.play{width:52px;height:52px;border-radius:50%;border:none;cursor:pointer;flex-shrink:0;
+  background:var(--grad);display:grid;place-items:center;
+  box-shadow:0 6px 18px rgba(255,122,89,.35);transition:transform .15s}
+.play:hover{transform:scale(1.06)}
+.play svg{width:20px;height:20px}
+.wave{flex:1;height:74px;position:relative;cursor:pointer}
+canvas{width:100%;height:100%;border-radius:8px}
+.tm{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:86px;text-align:center}
+.dl{background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-s);
+  width:42px;height:42px;display:grid;place-items:center;cursor:pointer;color:var(--muted);transition:all .18s}
+.dl:hover{color:var(--text);border-color:var(--accent)}
+.dl svg{width:18px;height:18px}
+
+/* ---------- history ---------- */
+.hist{margin-top:26px}
+.hist h2{font-size:14px;font-weight:700;color:var(--muted);margin-bottom:12px}
+.hrow{display:flex;align-items:center;gap:12px;background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--radius-s);padding:10px 14px;
+  margin-bottom:8px;cursor:pointer;transition:border-color .18s}
+.hrow:hover{border-color:#39415c}
+.hrow .hplay{width:34px;height:34px;border-radius:50%;flex-shrink:0;
+  background:var(--surface-2);border:1px solid var(--border);display:grid;place-items:center}
+.hrow .hplay svg{width:13px;height:13px}
+.hrow .htx{flex:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hrow .hd{font-size:11.5px;color:var(--faint);white-space:nowrap}
+
+footer{margin-top:46px;text-align:center;font-size:11.5px;color:var(--faint)}
+footer b{color:var(--muted);font-weight:600}
+
+.toast{position:fixed;bottom:24px;right:50%;transform:translateX(50%);
+  background:var(--surface-2);border:1px solid var(--border);border-radius:99px;
+  padding:10px 20px;font-size:13px;box-shadow:var(--shadow);display:none;z-index:9}
+.toast.show{display:block;animation:rise .3s ease}
+</style>
+</head>
+<body>
+<div class="orb a"></div><div class="orb b"></div>
+<div class="wrap">
+
+  <header>
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#231303" stroke-width="2.4" stroke-linecap="round">
+        <path d="M3 12h2l2-6 3 12 3-16 3 16 2-6h3"/>
+      </svg>
+    </div>
+    <div>
+      <h1>پارسی‌گو</h1>
+      <div class="sub">تبدیل متن فارسی به گفتار، با کلونینگ صدای مرجع</div>
+    </div>
+    <div class="badge">موتور ONNX · آفلاین · بدون torch</div>
+  </header>
+
+  <div class="grid">
+    <section class="panel">
+      <div class="label"><span>متن فارسی</span><span class="cnt" id="cnt">۰ / ۸۰۰</span></div>
+      <textarea id="txt" maxlength="800" placeholder="متن خود را بنویسید…">سلام، حال شما چطور است؟ امیدوارم روز خوبی داشته باشید.</textarea>
+      <div class="chips" id="chips"></div>
+      <div class="pace-row">
+        <span class="plabel">سرعت گفتار</span>
+        <div class="pchips">
+          <button class="pchip" data-p="0.85">آرام</button>
+          <button class="pchip sel" data-p="1">معمولی</button>
+          <button class="pchip" data-p="1.2">سریع</button>
+        </div>
+        <input type="range" id="pace" min="0.7" max="1.35" step="0.05" value="1" dir="ltr">
+        <span class="pval" id="paceVal">۱٫۰۰×</span>
+      </div>
+      <button class="go" id="go">
+        <span class="tx" style="display:flex;align-items:center;gap:10px">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/>
+          </svg>
+          ساخت گفتار
+        </span>
+        <span class="eq"><i></i><i></i><i></i><i></i></span>
+      </button>
+    </section>
+
+    <aside class="panel">
+      <div class="label"><span>صدای مرجع</span><span class="cnt">≤ ۵ ثانیه</span></div>
+      <div id="voices"></div>
+      <div class="drop" id="drop">
+        <b>بارگذاری صدا</b> — یا فایل را اینجا رها کنید<br>
+        <span style="font-size:11px;color:var(--faint)">صدای خودت را بده تا با آن حرف بزند (WAV)</span>
+      </div>
+      <input type="file" id="file" accept=".wav,.mp3,.ogg,.flac" hidden>
+    </aside>
+  </div>
+
+  <section class="panel result" id="result">
+    <div class="label"><span>فونم‌های تولیدشده</span><span class="cnt" id="rmeta"></span></div>
+    <div class="ph" id="ph"></div>
+    <div class="player">
+      <button class="play" id="play">
+        <svg id="icPlay" viewBox="0 0 24 24" fill="#231303"><path d="M8 5v14l11-7z"/></svg>
+        <svg id="icPause" viewBox="0 0 24 24" fill="#231303" style="display:none"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+      </button>
+      <div class="wave" id="wave"><canvas id="cv"></canvas></div>
+      <div class="tm" id="tm">۰:۰۰ / ۰:۰۰</div>
+      <div class="dl" id="dl" title="دانلود WAV">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 21h16"/>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <section class="hist" id="histWrap" style="display:none">
+    <h2>تاریخچه</h2>
+    <div id="hist"></div>
+  </section>
+
+  <footer>ساخته‌شده با <b>pocket-tts-farsi-v2</b> روی <b>ONNX Runtime</b> — کاملاً آفلاین، بدون GPU</footer>
+</div>
+<div class="toast" id="toast"></div>
+<audio id="au" preload="auto"></audio>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const fa = n => String(n).replace(/\d/g, d => "۰۱۲۳۴۵۶۷۸۹"[d]);
+const fmt = s => { s = Math.max(0, s|0); return fa((s/60|0)) + ":" + fa(String(s%60).padStart(2,"0")); };
+
+let VOICES = [], selVoice = null;
+let peaks = null, curId = null, curDur = 0, history = [];
+
+/* ---------- voices ---------- */
+async function loadVoices() {
+  const r = await fetch("/api/voices").then(r => r.json());
+  VOICES = r.voices;
+  if (!selVoice || !VOICES.find(v => v.id === selVoice))
+    selVoice = (VOICES[0] || {}).id;
+  renderVoices();
+}
+function renderVoices() {
+  $("voices").innerHTML = VOICES.map(v => `
+    <button class="vcard ${v.id===selVoice?"sel":""}" data-id="${v.id}">
+      <span class="ic">
+        ${v.id===selVoice
+          ? '<svg viewBox="0 0 24 24" fill="none" stroke="#231303" stroke-width="2.4" stroke-linecap="round"><path d="M3 12h2l2-6 3 12 3-16 3 16 2-6h3"/></svg>'
+          : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>'}
+      </span>
+      <span><div class="nm">${v.name}</div><div class="ds">${v.desc}</div></span>
+    </button>`).join("");
+  document.querySelectorAll(".vcard").forEach(b =>
+    b.onclick = () => { selVoice = b.dataset.id; renderVoices(); });
+}
+
+/* ---------- chips ---------- */
+const SAMPLES = [
+  "سلام، حال شما چطور است؟",
+  "اقتصاد آمریکا را تا سال ۲۰۳۰ تغییر دهد.",
+  "امروز هوا ابری است اما باران نمی‌بارد.",
+  "دانشگاه تهران در سال ۱۳۱۳ تأسیس شد.",
+];
+$("chips").innerHTML = SAMPLES.map(s => `<button class="chip">${s}</button>`).join("");
+document.querySelectorAll(".chip").forEach(c => c.onclick = () => {
+  $("txt").value = c.textContent; count();
+});
+
+/* ---------- pace ---------- */
+const paceEl = $("pace");
+function faNum(x) { return fa(x).replace(".", "٫"); }
+function setPace(v, fromChip) {
+  paceEl.value = v;
+  $("paceVal").textContent = faNum((+v).toFixed(2)) + "×";
+  document.querySelectorAll(".pchip").forEach(c =>
+    c.classList.toggle("sel", Math.abs(+c.dataset.p - v) < 0.01));
+}
+paceEl.addEventListener("input", () => setPace(paceEl.value));
+document.querySelectorAll(".pchip").forEach(c =>
+  c.onclick = () => setPace(c.dataset.p));
+setPace(1);
+
+/* ---------- counter ---------- */
+function count() { $("cnt").textContent = fa($("txt").value.length) + " / ۸۰۰"; }
+$("txt").addEventListener("input", count); count();
+
+/* ---------- toast ---------- */
+let toastT;
+function toast(msg) {
+  const t = $("toast"); t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 3200);
+}
+
+/* ---------- upload ---------- */
+$("drop").onclick = () => $("file").click();
+$("drop").ondragover = e => { e.preventDefault(); $("drop").classList.add("over"); };
+$("drop").ondragleave = () => $("drop").classList.remove("over");
+$("drop").ondrop = e => { e.preventDefault(); $("drop").classList.remove("over");
+  if (e.dataTransfer.files[0]) sendFile(e.dataTransfer.files[0]); };
+$("file").onchange = e => { if (e.target.files[0]) sendFile(e.target.files[0]); e.target.value = ""; };
+
+async function sendFile(f) {
+  toast("در حال بارگذاری و پردازش صدا…");
+  const fd = new FormData(); fd.append("file", f);
+  const r = await fetch("/api/voice/upload", { method: "POST", body: fd }).then(r => r.json())
+    .catch(() => ({ detail: "خطای شبکه" }));
+  if (r.detail) return toast(typeof r.detail === "string" ? r.detail : "فایل پذیرفته نشد");
+  toast(`صدا اضافه شد (${fa(r.seconds)} ثانیه)`);
+  await loadVoices(); selVoice = r.id; renderVoices();
+}
+
+/* ---------- generate ---------- */
+$("go").onclick = async () => {
+  const text = $("txt").value.trim();
+  if (!text) return toast("متنی بنویسید");
+  $("go").disabled = true; $("go").classList.add("busy");
+  const t0 = performance.now();
+  const tick = setInterval(() =>
+    $("go").querySelector(".tx").textContent = `در حال ساخت… ${fa(((performance.now()-t0)/1000).toFixed(0))} ثانیه`, 250);
+  try {
+    const r = await fetch("/api/tts", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, voice: selVoice, pace: +paceEl.value }),
+    }).then(r => r.json());
+    if (r.detail) return toast(typeof r.detail === "string" ? r.detail : "خطا در تولید");
+    await present(r, text);
+  } catch (e) { toast("ارتباط با سرور برقرار نشد"); }
+  finally {
+    clearInterval(tick);
+    $("go").disabled = false; $("go").classList.remove("busy");
+    $("go").querySelector(".tx").innerHTML = `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" style="display:flex"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg> ساخت گفتار`;
+  }
+};
+
+/* ---------- player ---------- */
+const cv = $("cv"), ctx = cv.getContext("2d");
+let raf;
+
+function drawCanvas(prog) {
+  const dpr = devicePixelRatio || 1;
+  const w = cv.clientWidth * dpr, h = cv.clientHeight * dpr;
+  if (cv.width !== w) { cv.width = w; cv.height = h; }
+  ctx.clearRect(0, 0, w, h);
+  if (!peaks) return;
+  const n = peaks.length, bw = w / n;
+  const mid = h / 2;
+  const g = ctx.createLinearGradient(0, 0, w, 0);
+  g.addColorStop(0, "#ff7a59"); g.addColorStop(1, "#ffb454");
+  for (let i = 0; i < n; i++) {
+    const bh = Math.max(3 * dpr, peaks[i] * h * 0.92);
+    const played = i / n <= prog;
+    ctx.fillStyle = played ? g : "rgba(140,148,170,.28)";
+    const x = w - (i + 1) * bw + bw * 0.18;   // RTL: time flows right→left
+    ctx.beginPath();
+    ctx.roundRect(x, mid - bh / 2, bw * 0.64, bh, bw * 0.32);
+    ctx.fill();
+  }
+}
+
+async function present(r, text) {
+  curId = r.id; curDur = r.duration;
+  $("result").classList.add("show");
+  $("ph").textContent = r.phonemes;
+  $("rmeta").textContent = `${fa(r.sentences)} جمله · ${fa(r.duration)} ثانیه`;
+  $("result").scrollIntoView({ behavior: "smooth", block: "nearest" });
+
+  // decode for the waveform
+  const buf = await fetch(`/api/audio/${r.id}`).then(x => x.arrayBuffer());
+  const actx = new (window.AudioContext || window.webkitAudioContext)();
+  const ab = await actx.decodeAudioData(buf.slice(0));
+  const data = ab.getChannelData(0);
+  const N = 160, step = Math.floor(data.length / N);
+  peaks = new Array(N);
+  for (let i = 0; i < N; i++) {
+    let m = 0;
+    for (let j = 0; j < step; j += 16) m = Math.max(m, Math.abs(data[i * step + j]));
+    peaks[i] = m;
+  }
+  const mx = Math.max(...peaks, 0.01);
+  peaks = peaks.map(p => p / mx);
+
+  const au = $("au");
+  au.src = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
+  au.onloadedmetadata = () => { curDur = au.duration; draw(0); };
+  au.ontimeupdate = () => { if (! seeking) draw(au.currentTime / au.duration); };
+  au.onended = () => setPlayIcon(false);
+  history.unshift({ id: r.id, text, dur: r.duration });
+  renderHistory();
+  draw(0);
+  setPlayIcon(false);
+  au.play().then(() => setPlayIcon(true)).catch(() => {});
+}
+
+let seeking = false;
+function draw(t) {
+  drawCanvas(t || 0);
+  $("tm").textContent = `${fmt((t || 0) * curDur)} / ${fmt(curDur)}`;
+  if (au && !au.paused && !au.ended) raf = requestAnimationFrame(() => draw(au.currentTime / au.duration));
+}
+const au = $("au");
+function setPlayIcon(playing) {
+  $("icPlay").style.display = playing ? "none" : "block";
+  $("icPause").style.display = playing ? "block" : "none";
+  if (playing) raf = requestAnimationFrame(() => draw(au.currentTime / au.duration));
+}
+$("play").onclick = () => {
+  if (!au.src) return;
+  if (au.paused) { au.play(); setPlayIcon(true); } else { au.pause(); setPlayIcon(false); }
+};
+// click-to-seek on the waveform (RTL mapping)
+$("wave").addEventListener("pointerdown", e => {
+  if (!au.src || !peaks) return;
+  seeking = true;
+  const rect = cv.getBoundingClientRect();
+  const frac = Math.min(1, Math.max(0, (rect.right - e.clientX) / rect.width));
+  au.currentTime = frac * curDur; draw(frac);
+  const move = ev => {
+    const f = Math.min(1, Math.max(0, (rect.right - ev.clientX) / rect.width));
+    au.currentTime = f * curDur; draw(f);
+  };
+  const up = () => { seeking = false; removeEventListener("pointermove", move); removeEventListener("pointerup", up); };
+  addEventListener("pointermove", move); addEventListener("pointerup", up);
+});
+$("dl").onclick = () => {
+  if (!curId) return;
+  const a = document.createElement("a");
+  a.href = `/api/audio/${curId}`; a.download = "parigo.wav"; a.click();
+};
+
+/* ---------- history ---------- */
+function renderHistory() {
+  $("histWrap").style.display = history.length ? "block" : "none";
+  $("hist").innerHTML = history.slice(0, 8).map((h, i) => `
+    <div class="hrow" data-i="${i}">
+      <span class="hplay"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
+      <span class="htx">${h.text}</span>
+      <span class="hd">${fa(h.dur)} ثانیه</span>
+    </div>`).join("");
+  document.querySelectorAll(".hrow").forEach(row => row.onclick = () => {
+    const h = history[+row.dataset.i];
+    au.src = `/api/audio/${h.id}`; curDur = h.dur; curId = h.id;
+    $("result").classList.add("show");
+    fetch(`/api/audio/${h.id}`).then(x => x.arrayBuffer()).then(async buf => {
+      const actx = new (window.AudioContext || window.webkitAudioContext)();
+      const ab = await actx.decodeAudioData(buf.slice(0));
+      const data = ab.getChannelData(0), N = 160, step = Math.floor(data.length / N);
+      peaks = new Array(N);
+      for (let i = 0; i < N; i++) { let m = 0;
+        for (let j = 0; j < step; j += 16) m = Math.max(m, Math.abs(data[i*step+j])); peaks[i] = m; }
+      const mx = Math.max(...peaks, 0.01); peaks = peaks.map(p => p / mx);
+      draw(0);
+    });
+    au.play().then(() => setPlayIcon(true)).catch(() => {});
+  });
+}
+
+addEventListener("resize", () => draw(au.currentTime / (curDur || 1)));
+loadVoices();
+</script>
+</body>
+</html>
