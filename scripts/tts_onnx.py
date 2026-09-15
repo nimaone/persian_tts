@@ -51,15 +51,16 @@ def _letter_words(tp: str) -> list[str]:
     return [w for w in tp.split() if any(ch.isalnum() for ch in w)]
 
 
-def merge_short_phrases(phrases: list[str], min_words: int = 4,
+def merge_short_phrases(phrases: list[str], min_words: int = 2,
                         keep_standalone=None) -> list[str]:
-    """Very short phrases (< min_words words) read badly as standalone
-    chunks, so they merge into a neighbour — EXCEPT phrases ending in
-    strong punctuation: "سؤال اصلی:" is a lead-in and "…است —" ends a
-    dash-delimited aside, and in both cases the pause that follows is the
-    point, so they stay standalone. `keep_standalone(p)` lets the caller
-    veto that protection (an unclean phonemisation). Must run on TEXT
-    (before phonemisation): phonemes carry no punctuation."""
+    """Punctuation is a pause: a phrase with >= min_words words keeps its
+    own pause slot (the reader asked for it with the comma/paren/colon).
+    Only 1-word fragments merge forward — they read badly standalone and
+    GE2P is noisy on 1-word inputs. Phrases ending in strong punctuation
+    ("سؤال اصلی:", "…است —") stay standalone however short, and
+    `keep_standalone(p)` lets the caller veto that for an unclean
+    phonemisation. Must run on TEXT (before phonemisation): phonemes carry
+    no punctuation."""
     def _protected(p: str) -> bool:
         return p.rstrip().endswith(_STRONG_LEADIN) and (
             keep_standalone is None or keep_standalone(p))
@@ -122,15 +123,17 @@ _TEXT_LIGHT_VERBS = {
 
 
 def merge_leading_light_verbs(phrases: list[str]) -> list[str]:
-    """Merge any phrase that starts with a light verb into the previous
-    phrase, so the verb follows its host word and is actually spoken. The
-    dash/colon pause that preceded it gives way to a small intra-chunk gap
-    after the verb — a minor prosody cost against a dropped word."""
+    """Merge any phrase that starts with a light verb — or with the object
+    marker «را», which clings to the previous phrase's noun — into the
+    previous phrase, so the clitic follows its host and is actually spoken.
+    The dash/colon pause that preceded it gives way to a small intra-chunk
+    gap after the verb — a minor prosody cost against a dropped word."""
     out: list[str] = []
     for p in phrases:
         words = _letter_words(p)
         first = words[0].strip("«»()\"'.,;:!?،؛:-") if words else ""
-        if out and first.replace("\u200c", "") in _TEXT_LIGHT_VERBS:
+        key = first.replace("\u200c", "")
+        if out and (key in _TEXT_LIGHT_VERBS or key == "را"):
             out[-1] += " " + p
         else:
             out.append(p)
@@ -347,7 +350,11 @@ class OnnxTts:
                         if cur[k] in self._PREPS and len(cur) - k <= 2:
                             cut = k
                             break
-                if cut >= 3:
+                if (cut >= 3
+                        and len(self.sp.encode(" ".join(cur[:cut]), out_type=int)) >= 6):
+                    # guard: a cut must not create a tiny chunk (<6 tokens)
+                    # — the model is unreliable on those ("har taklif rA"
+                    # came out as garbage on whole voices)
                     chunks.append(" ".join(cur[:cut]))
                     cur = cur[cut:]
                 else:
@@ -558,8 +565,8 @@ class OnnxTts:
             stop (measured windowed, so noise blips inside the silence
             cannot hide it).
         Preference order when no attempt is fully clean: loud beats silent,
-        solid beats mumbled, in-window beats out, less dead air, then
-        longer (dropped words read short). Returns trimmed speech."""
+        enough actual speech beats garbage, more speech beats less (dropped
+        words read short), then less dead air. Returns trimmed speech."""
         tokens = len(self.sp.encode(chunk, out_type=int))
         expected_speech = tokens / self.tps_est  # ~seconds (conservative)
         best, best_key = None, None
@@ -571,14 +578,19 @@ class OnnxTts:
             dur = (e0 - s0) / self.sample_rate
             rms = float(np.sqrt((speech ** 2).mean()))
             loud_ok = rms >= 0.02
-            solid_ok = self._solid_fraction(speech) >= 0.55
+            frac = self._solid_fraction(speech)
+            # actual speech seconds: a short chunk often says its words fast
+            # and then trails ~1 s of pre-EOS silence — total duration and
+            # solid fraction both look bad while the WORDS are fine, and a
+            # dense garbage attempt used to win the ranking on them.
+            solid_dur = frac * dur
+            dur_ok = 0.30 * expected_speech <= solid_dur <= 1.6 * expected_speech
             regions = self._dead_air_regions(speech)
             dead = max((j - i) for i, j in regions) / self.sample_rate if regions else 0.0
-            dur_ok = 0.35 * expected_speech <= dur <= 1.6 * expected_speech
-            key = (loud_ok, solid_ok, dur_ok, 0.0 if dead <= 0.35 else -dead, dur)
+            key = (loud_ok, dur_ok, solid_dur, 0.0 if dead <= 0.35 else -dead)
             if best_key is None or key > best_key:
                 best, best_key = speech, key
-            if loud_ok and solid_ok and dur_ok and dead <= 0.35:
+            if loud_ok and dur_ok and frac >= 0.55 and dead <= 0.35:
                 break
         return best
 
