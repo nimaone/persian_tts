@@ -10,6 +10,7 @@
 # CLI:
 #   python scripts/tts_onnx.py "salAm hAle SomA Cetor ?ast" voices/female_hello.wav out.wav
 import json
+import os
 import re
 import sys
 import time
@@ -202,6 +203,11 @@ class OnnxTts:
 
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        # chunks generate in parallel (4 workers); the models are small and
+        # batch-1 steps barely use extra threads — cap per-session threads
+        # to avoid 4x oversubscription on an 8-core box
+        opts.intra_op_num_threads = 2
+        opts.inter_op_num_threads = 1
         prov = ["CPUExecutionProvider"]
         self.s_flow = ort.InferenceSession(str(self.dir / "flow_lm_step.onnx"), opts, providers=prov)
         self.s_enc = ort.InferenceSession(str(self.dir / "mimi_encoder.onnx"), opts, providers=prov)
@@ -478,16 +484,37 @@ class OnnxTts:
         # re-absorb a short colon lead-in that the caller kept standalone.
 
         segments = []  # (audio, gap_before_seconds)
+        jobs = []      # (chunk, gap) — generation units
         for pi, (phrase, pgap) in enumerate(phrases):
             for ci, chunk in enumerate(self.chunk_phonemes(phrase)):
-                audio = self._generate_with_retry(voice_cache, voice_off, chunk)
                 if pi == 0 and ci == 0:
                     gap = 0.0
                 elif ci == 0:
                     gap = pgap if pgap is not None else 0.20
                 else:
                     gap = 0.12
-                segments.append((audio, gap))
+                jobs.append((chunk, gap))
+
+        # chunks are independent (each generates from the pristine voice
+        # state), and batch-1 flow steps barely saturate the cores —
+        # generate them in parallel with per-chunk rngs
+        seeds = self.rng.integers(0, 2**63, size=max(1, len(jobs)))
+        if len(jobs) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+
+            def run(i):
+                return self._generate_with_retry(
+                    voice_cache, voice_off, jobs[i][0],
+                    rng=np.random.default_rng(int(seeds[i])))
+
+            workers = min(4, os.cpu_count() or 4)
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                audios = list(ex.map(run, range(len(jobs))))
+        else:
+            audios = [self._generate_with_retry(
+                voice_cache, voice_off, jobs[0][0],
+                rng=np.random.default_rng(int(seeds[0])))]
+        segments = [(a, jobs[i][1]) for i, a in enumerate(audios)]
         audio = self._stitch(segments)
         if abs(pace - 1.0) >= 0.03:
             from pedalboard import time_stretch
@@ -547,8 +574,11 @@ class OnnxTts:
                     if float(np.sqrt((speech[i * w:(i + 1) * w] ** 2).mean())) >= floor)
         return solid / n
 
-    def _generate_with_retry(self, voice_cache, voice_off, chunk, attempts=3):
-        """Generate one chunk, retrying when quality is bad. Failure modes,
+    def _generate_with_retry(self, voice_cache, voice_off, chunk, attempts=3,
+                             rng=None):
+        """Generate one chunk, retrying when quality is bad. `rng` lets
+        parallel callers give each chunk its own independent noise stream
+        (the engine's shared rng is not thread-safe). Failure modes,
         all stochastic per the model card; a fresh attempt usually lands
         clean:
         (1) near-silent output (a generation that EOS'd into nothing) —
@@ -571,11 +601,17 @@ class OnnxTts:
         expected_speech = tokens / self.tps_est  # ~seconds (conservative)
         best, best_key = None, None
         for _ in range(attempts):
-            latents, _, _ = self._generate_chunk(voice_cache.copy(), voice_off, chunk)
+            latents, _, _ = self._generate_chunk(voice_cache.copy(), voice_off, chunk,
+                                                   rng=rng)
             audio = self._decode_all(latents)
             s0, e0 = self._speech_bounds(audio)
             speech = audio[s0:e0]
-            dur = (e0 - s0) / self.sample_rate
+            # strip model dead air BEFORE measuring (and returning): a
+            # chunk often says its words then trails ~1 s of pre-EOS
+            # silence, which used to fail the density gate and trigger
+            # two pointless retries — 3x the cost on clean chunks
+            speech = self._compress_pauses(speech, max_pause=0.30, keep=0.12)
+            dur = len(speech) / self.sample_rate
             rms = float(np.sqrt((speech ** 2).mean()))
             loud_ok = rms >= 0.02
             frac = self._solid_fraction(speech)
@@ -679,11 +715,12 @@ class OnnxTts:
         out.append(audio[pos:])
         return np.concatenate(out)
 
-    def _generate_chunk(self, cache, off, chunk):
+    def _generate_chunk(self, cache, off, chunk, rng=None):
         tokens = self.sp.encode(chunk, out_type=int)
         text_emb = self.lut[np.asarray(tokens)][None].astype(np.float32)
 
-        noise = (self.rng.standard_normal((1, self.ldim)) * (self.temp**0.5)).astype(np.float32)
+        r = rng if rng is not None else self.rng
+        noise = (r.standard_normal((1, self.ldim)) * (self.temp**0.5)).astype(np.float32)
         lat, _, cache, off = self._flow_step(
             np.full((1, 1, self.ldim), np.nan, np.float32), text_emb, off, noise, cache)
         latents = [lat]
@@ -694,7 +731,7 @@ class OnnxTts:
 
         eos_step = None
         for step in range(max_gen_len):
-            noise = (self.rng.standard_normal((1, self.ldim)) * (self.temp**0.5)).astype(np.float32)
+            noise = (r.standard_normal((1, self.ldim)) * (self.temp**0.5)).astype(np.float32)
             lat, eos, cache, off = self._flow_step(
                 latents[-1].reshape(1, 1, self.ldim),
                 np.zeros((1, 0, self.dim), np.float32), off, noise, cache)
