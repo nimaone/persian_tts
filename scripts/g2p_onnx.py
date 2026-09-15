@@ -8,6 +8,7 @@
 # Greedy decoding host-side (encoder is re-run once; decoder re-runs on the
 # growing sequence — the model is 2 layers, outputs are short, so this is
 # both fast and cache-free).
+import re
 import sys
 from pathlib import Path
 
@@ -22,6 +23,54 @@ from normalize_fa import normalize_for_model
 
 # ByT5: 0=<pad> 1=</s> 2=<unk>, bytes start at 3 (verified against HF tokenizer)
 PAD, EOS, UNK = 0, 1, 2
+
+# ---- Latin -> Persian transliteration ----------------------------------
+# normalize_for_model strips Latin entirely and the G2P model has only ever
+# seen Persian script, so an English word in the text is silently dropped
+# from the audio ("(sparse) است" -> "است"). Transliterate it to Persian
+# script first — the same convention Persian speakers use (ویندوز، سرور).
+_LATIN_DIGRAPHS = {
+    "sh": "ش", "ch": "چ", "th": "ث", "ph": "ف", "gh": "غ", "kh": "خ",
+    "wh": "و", "ck": "ک", "qu": "کو", "oo": "و", "ee": "ی", "ea": "ی",
+    "ou": "او", "au": "او", "ai": "ای", "ay": "ای", "ey": "ای",
+    "oi": "اوی", "oy": "اوی",
+}
+_LATIN_CHAR = {
+    "a": "ا", "b": "ب", "c": "ک", "d": "د", "e": "", "f": "ف", "g": "گ",
+    "h": "ه", "i": "ی", "j": "ج", "k": "ک", "l": "ل", "m": "م", "n": "ن",
+    "o": "او", "p": "پ", "q": "ق", "r": "ر", "s": "س", "t": "ت", "u": "و",
+    "v": "و", "w": "و", "x": "کس", "y": "ی", "z": "ز",
+}
+# short all-caps words are read letter by letter (GPU -> جی‌پی‌یو)
+_LETTER_NAMES = {
+    "a": "ای", "b": "بی", "c": "سی", "d": "دی", "e": "ای", "f": "اف",
+    "g": "جی", "h": "اچ", "i": "آی", "j": "جی", "k": "کی", "l": "ال",
+    "m": "ام", "n": "ان", "o": "او", "p": "پی", "q": "کیو", "r": "آر",
+    "s": "اس", "t": "تی", "u": "یو", "v": "وی", "w": "دبلیو", "x": "ایکس",
+    "y": "وای", "z": "زد",
+}
+_LATIN_WORD = re.compile("[A-Za-z][A-Za-z'-]*")
+_CLUSTER_START = set("پتکبجچذژزصضثفگسش")
+
+
+def _transliterate_word(w: str) -> str:
+    if w.isupper() and 2 <= len(w) <= 5 and w.isalpha():
+        return "‌".join(_LETTER_NAMES[c] for c in w.lower())
+    lw = w.lower()
+    out, i = [], 0
+    while i < len(lw):
+        two = lw[i : i + 2]
+        if two in _LATIN_DIGRAPHS:
+            out.append(_LATIN_DIGRAPHS[two])
+            i += 2
+        else:
+            out.append(_LATIN_CHAR.get(lw[i], ""))
+            i += 1
+    s = "".join(out)
+    # English onsets like sp/st/sk are impossible in Persian: اِسپارس not سپارس
+    if len(s) >= 2 and s[0] == "س" and s[1] in _CLUSTER_START:
+        s = "ا" + s
+    return s or w
 TO_PHONEMES = str.maketrans({"/": "a", "a": "A", "@": "?", "$": "S", "c": "C"})
 
 
@@ -43,6 +92,7 @@ class OnnxG2P:
         self.max_len = 512
 
     def phonemise(self, text: str, keep_ezafe: bool = False) -> str:
+        text = _LATIN_WORD.sub(lambda m: _transliterate_word(m.group(0)), text)
         text = normalize_for_model(text)
         text = text.replace("؟", "").replace("?", "")
         ids = encode(text)

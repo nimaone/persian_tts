@@ -178,25 +178,40 @@ class OnnxTts:
         "dar", "be", "az", "tA", "va", "ke", "rA", "bA", "bedune",
         "age", "vali", "yA", "barAye", "vase", "dAr", "mi",
     }
+    # Conjunctions bind to their LEFT operand ("A va B"): a chunk must not
+    # start with one, or the coordinated pair is split by the chunk pause.
+    _CONJUNCTIONS = {"va", "yA", "vali", "amA", "hattA", "ke"}
 
     def _fix_boundaries(self, chunks: list[str], min_words: int = 3) -> list[str]:
         """Move words across chunk boundaries so no boundary splits a bound
-        phrase: (a) an ezafe-marked word ("X1") must not START a chunk — its
-        head noun would be stranded in the previous chunk ("fAylhA | ruye1
-        vindoz"); (b) a function word must not END a chunk ("... Savad dar |
-        mostanadAt"). Both produce the unnatural pauses heard mid-sentence."""
+        phrase. Each rule moves the previous chunk's LAST word down, then the
+        same boundary is re-checked (rules chain):
+        (a) an ezafe-marked word ("X1") must not START a chunk — its head noun
+            would be stranded ("fAylhA | ruye1 vindoz");
+        (b) a function word must not END a chunk ("... Savad dar | mostanadAt");
+        (c) a conjunction must not START a chunk ("... pAydAr | va qAbele ...")
+            — it binds to its left operand;
+        (d) unmarked compounds: G2P does not always emit the "1" marker (ZWNJ
+            compounds like قابل‌اعتماد come out as "qAbele ?e?temAd"), so an
+            "…e | ?…" pattern across a boundary is treated as a broken word.
+        """
         i = 1
         while i < len(chunks):
             prev, nxt = chunks[i - 1].split(), chunks[i].split()
             bad = False
-            if nxt and nxt[0].endswith("1") and len(prev) > min_words:
-                bad = True          # ezafe phrase head stranded before boundary
-            elif prev and prev[-1] in self._FUNCTION_WORDS and len(prev) > min_words:
-                bad = True          # dangling preposition/conjunction
+            if len(prev) > min_words:
+                if nxt and nxt[0].endswith("1"):
+                    bad = True      # (a) marked ezafe head stranded
+                elif prev and prev[-1] in self._FUNCTION_WORDS:
+                    bad = True      # (b) dangling preposition/conjunction
+                elif nxt and nxt[0] in self._CONJUNCTIONS:
+                    bad = True      # (c) conjunction split from its operand
+                elif (prev and nxt and prev[-1].endswith("e")
+                      and nxt[0].startswith("?")):
+                    bad = True      # (d) unmarked compound split (qAbele | ?e?temAd)
             if bad:
                 chunks[i - 1] = " ".join(prev[:-1])
                 chunks[i] = prev[-1] + " " + chunks[i]
-                # re-check this boundary: the new tail may be another function word
             else:
                 i += 1
         return chunks
@@ -297,6 +312,10 @@ class OnnxTts:
                 out.append(np.zeros(int(gap * self.sample_rate), dtype=np.float32))
             out.append(p)
         audio = np.concatenate(out)
+        # peak guard: loudness matching can push peaks past full scale
+        peak = float(np.abs(audio).max()) if len(audio) else 0.0
+        if peak > 0.98:
+            audio = audio * (0.98 / peak)
         return self._compress_pauses(audio)
 
     def _compress_pauses(self, audio, max_pause=0.50, keep=0.35, rel_floor=0.03):
