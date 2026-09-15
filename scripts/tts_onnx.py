@@ -37,8 +37,13 @@ def split_phrases(sentence: str) -> list[str]:
     """Punctuation-aware phrase units. G2P discards punctuation, so a chunker
     working on phonemes alone cannot see where the writer paused (model card:
     'anything chunking the result cuts on token count alone'). Splitting the
-    TEXT first keeps commas / dashes / colons as the pause points they are."""
-    return [t.strip() for t in _PHRASE_SPLIT.split(sentence.strip()) if t.strip()]
+    TEXT first keeps commas / dashes / colons as the pause points they are.
+    Phrases with no letters/digits are debris — "— —" typed as two dashes
+    leaves a lone "—", and a standalone "..." sentence is all punctuation —
+    and would otherwise reach the G2P as an empty string ("normalisation
+    emptied the text" -> HTTP 400 on perfectly valid Persian)."""
+    return [t for t in _PHRASE_SPLIT.split(sentence.strip())
+            if t.strip() and _letter_words(t)]
 
 
 # A phrase ending in one of these is a lead-in ("سؤال اصلی:") whose whole
@@ -111,14 +116,19 @@ def split_long_phrase(tp: str, max_words: int = 9) -> list[str]:
 # Light verbs in TEXT form (ZWNJ/space-stripped). A phrase must not START
 # with one: the TTS model refuses to lead an utterance with a bare verbal
 # enclitic and drops the word — "…جدیدی — | می‌شود شبکه را…" loses «می‌شود»
-# on every voice — while «دیده می‌شود» at a chunk end reads fine.
+# on every voice — while «دیده می‌شود» at a chunk end reads fine. Kept in
+# sync with the phoneme-side _LIGHT_VERBS (داد/دارد/می‌دهد families included).
 _TEXT_LIGHT_VERBS = {
     "است", "هست", "هستم", "هستی", "هستیم", "هستید", "هستند",
     "بود", "بودم", "بودی", "بودیم", "بودید", "بودند", "باشد", "باشند",
     "شد", "شدم", "شدی", "شدیم", "شدید", "شدند", "شود", "شوند",
-    "کرد", "کردم", "کردی", "کردیم", "کردید", "کردند",
+    "کرد", "کردم", "کردی", "کردیم", "کردید", "کردند", "کرده",
     "کنم", "کنی", "کند", "کنیم", "کنید", "کنند",
+    "داد", "دادم", "دادی", "دادیم", "دادید", "دادند", "داده",
+    "بدهد", "بدهند",
     "میشود", "میشوند", "میکند", "میکنند", "میکرد", "میکردند",
+    "میداد", "میدادند", "میدهد", "میدهند",
+    "دارد", "دارم", "داری", "داریم", "دارید", "دارند", "داشت",
     "میباشد", "میباشند",
 }
 
@@ -153,12 +163,17 @@ def plan_phrases(sentence: str, g2p) -> list[tuple[str, float]]:
         # lead-in may only stand alone if its phoneme word count matches
         # its text word count; otherwise it merges forward like any other
         # tiny phrase (merged text gives the G2P the context it needs).
-        # The text side is transliterated first — "self-recurrency" is one
-        # text word but two Persian words by the time the G2P sees it.
+        # The text side is transliterated AND normalised first — "self-
+        # recurrency" is one text word but two Persian words, and "۱۳۱۳:"
+        # is one text word but five G2P words (numbers expand); the raw
+        # count wrongly vetoed such lead-ins.
         if tp not in cache:
-            from g2p_onnx import transliterate_text
+            from g2p_onnx import transliterate_text  # puts model/v2 on sys.path
+            from normalize_fa import normalize_for_model
+            want = len(_letter_words(
+                normalize_for_model(transliterate_text(tp))
+                .replace("؟", "").replace("?", "").replace(":", "")))
             ph = g2p.phonemise(tp, keep_ezafe=True)
-            want = len(_letter_words(transliterate_text(tp)))
             cache[tp] = bool(ph) and len(ph.split()) == want
         return cache[tp]
 
@@ -306,6 +321,8 @@ class OnnxTts:
             for plan in sentences:
                 parts.append(self.synthesize(plan, voice_wav, pace=pace))
                 parts.append(silence)
+            if not parts:  # text was all punctuation debris
+                return np.zeros(0, dtype=np.float32)
             return np.concatenate(parts[:-1]) if len(parts) > 1 else parts[0]
         return self.synthesize(text, voice_wav, seed=seed, pace=pace)
 

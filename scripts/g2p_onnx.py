@@ -107,7 +107,10 @@ def encode(text: str) -> list[int]:
 
 
 def decode(ids) -> str:
-    return bytes(i - 3 for i in ids if i >= 3).decode("utf-8", errors="replace")
+    # ids 3..258 are the 256 byte tokens; 259..383 are T5 <extra_id>s (the
+    # decoder's vocab is 384) which training targets never emit — drop them
+    # instead of crashing bytes() on out-of-range values
+    return bytes(i - 3 for i in ids if 3 <= i <= 258).decode("utf-8", errors="replace")
 
 
 class OnnxG2P:
