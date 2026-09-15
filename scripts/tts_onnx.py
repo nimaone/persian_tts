@@ -758,13 +758,15 @@ class OnnxTts:
 
     def _stitch(self, segments):
         """Join chunk audios into one continuous-sounding piece: loudness
-        matched to the MEDIAN chunk level — chunks are generated fresh and
-        their levels differ by up to ~1.6x, and the first chunk is often a
-        1-word colon lead-in whose level is an outlier — plus 8 ms declick
-        fades and fixed short pauses instead of the variable 1-2 s of
-        model-generated dead air. `segments` is a list of (audio,
-        gap_before) pairs — a phrase start (punctuation position) gets a
-        slightly longer pause than an intra-phrase chunk boundary."""
+        matched to the MEDIAN chunk level (chunks are generated fresh and
+        their levels differ wildly — a female_short segment measured at 3x
+        its median), plus 8 ms declick fades and fixed short pauses instead
+        of the variable 1-2 s of model-generated dead air. The gain clip is
+        deliberately wide (0.4-2.5): the old ±35% bound left such an outlier
+        2.25x above the rest — a 7 dB jump between adjacent segments; the
+        final peak guard still protects the output. `segments` is a list of
+        (audio, gap_before) pairs — a phrase start (punctuation position)
+        gets a slightly longer pause than an intra-phrase chunk boundary."""
         if not segments:
             return np.zeros(0, dtype=np.float32)
         levels = [float(np.sqrt((p ** 2).mean())) for p, _ in segments if len(p)]
@@ -774,7 +776,7 @@ class OnnxTts:
         for p, gap in segments:
             rms = float(np.sqrt((p ** 2).mean()))
             if rms > 1e-6 and target > 1e-6:
-                p = p * float(np.clip(target / rms, 0.75, 1.35))
+                p = p * float(np.clip(target / rms, 0.4, 2.5))
             if len(p) > 2 * f:
                 p = p.copy()
                 p[:f] *= np.linspace(0.0, 1.0, f, dtype=np.float32)
