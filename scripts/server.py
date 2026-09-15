@@ -50,7 +50,7 @@ _store_lock = threading.Lock()
 
 # punctuation-aware phrase splitting lives with the engine (single source of
 # truth for where pauses may fall)
-from tts_onnx import split_phrases  # noqa: E402
+from tts_onnx import plan_phrases  # noqa: E402
 
 
 def get_engine():
@@ -124,26 +124,24 @@ def tts(req: TTSRequest):
 
     with _engine_lock:
         for sent in split_sentences(text):
-            # punctuation-aware: each phrase (comma/dash/colon-delimited) is a
-            # pause unit, phonemised separately so chunk boundaries can never
-            # fall mid-phrase while punctuation positions are still visible
+            # punctuation-aware plan: each phrase (comma/dash/colon-delimited)
+            # is a pause unit with its own gap, and short lead-ins ending in
+            # strong punctuation ("سؤال اصلی:") stay standalone
             try:
-                phs = [engine._g2p.phonemise(p, keep_ezafe=True)
-                       for p in split_phrases(sent)]
+                plan = plan_phrases(sent, engine._g2p)
             except ValueError as e:
                 raise HTTPException(400, "متن فارسی معتبری پیدا نشد") from e
-            phs = [p for p in phs if p]
-            if not phs:
+            if not plan:
                 continue
             # model card: retry a runaway once (stochastic; 2nd attempt usually ends)
             tokens = sum(len(engine.sp.encode(p.replace("1", ""), out_type=int))
-                         for p in phs)
+                         for p, _ in plan)
             cap = tokens / engine.tps_est + engine.gen_pad + 1
             for attempt in range(2):
-                audio = engine.synthesize(phs, voice_path(req.voice), pace=pace)
+                audio = engine.synthesize(plan, voice_path(req.voice), pace=pace)
                 if len(audio) / SR <= cap + 2.0:  # multi-chunk texts run longer
                     break
-            phonemes_all.append(" ".join(p.replace("1", "") for p in phs))
+            phonemes_all.append(" ".join(p.replace("1", "") for p, _ in plan))
             chunks.append(audio)
             chunks.append(np.zeros(int(PAUSE_S / pace * SR), dtype=audio.dtype))
 

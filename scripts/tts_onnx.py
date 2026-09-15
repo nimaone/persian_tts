@@ -38,6 +38,65 @@ def split_phrases(sentence: str) -> list[str]:
     return [t.strip() for t in _PHRASE_SPLIT.split(sentence.strip()) if t.strip()]
 
 
+# A phrase ending in one of these is a lead-in ("سؤال اصلی:") whose whole
+# purpose is the pause that follows it.
+_STRONG_LEADIN = (":", "؛", "—", "–")
+
+
+def merge_short_phrases(phrases: list[str], min_words: int = 4,
+                        keep_standalone=None) -> list[str]:
+    """Very short phrases (< min_words words) read badly as standalone
+    chunks, so they merge into a neighbour — EXCEPT lead-ins ending in
+    strong punctuation: however short, "سؤال اصلی:" must stay standalone
+    because the pause after the colon is exactly what the writer asked for.
+    `keep_standalone(p)` lets the caller veto that protection (an unclean
+    phonemisation). Must run on TEXT (before phonemisation): phonemes carry
+    no punctuation."""
+    def _protected(p: str) -> bool:
+        return p.rstrip().endswith(_STRONG_LEADIN) and (
+            keep_standalone is None or keep_standalone(p))
+
+    out: list[str] = []
+    for p in phrases:
+        if out and len(out[-1].split()) < min_words and not _protected(out[-1]):
+            out[-1] += " " + p
+        else:
+            out.append(p)
+    if len(out) >= 2 and len(out[-1].split()) < min_words and not _protected(out[-2]):
+        out[-2] += " " + out.pop()
+    return out
+
+
+def plan_phrases(sentence: str, g2p) -> list[tuple[str, float]]:
+    """One text sentence -> [(phonemes, gap_before_seconds), ...].
+    Punctuation-aware splitting AND tiny-phrase merging happen here, where
+    the punctuation is still visible. Gap: 0.20 s at a normal phrase start,
+    0.26 s after a colon/semicolon lead-in — how a reader delivers it."""
+    cache: dict[str, bool] = {}
+
+    def clean(tp: str) -> bool:
+        # GE2P is noisy on 1-word inputs ("نکته:" -> "nokte nokte"): a
+        # lead-in may only stand alone if its phoneme word count matches
+        # its text word count; otherwise it merges forward like any other
+        # tiny phrase (merged text gives the G2P the context it needs).
+        if tp not in cache:
+            ph = g2p.phonemise(tp, keep_ezafe=True)
+            cache[tp] = bool(ph) and len(ph.split()) == len(tp.split())
+        return cache[tp]
+
+    tps = merge_short_phrases(split_phrases(sentence), keep_standalone=clean)
+    out: list[tuple[str, float]] = []
+    prev_tp: str | None = None
+    for tp in tps:
+        ph = g2p.phonemise(tp, keep_ezafe=True)
+        if not ph:
+            continue
+        strong = prev_tp is not None and prev_tp.rstrip().endswith((":", "؛"))
+        out.append((ph, 0.26 if strong else 0.20))
+        prev_tp = tp
+    return out
+
+
 class OnnxTts:
     def __init__(self, pkg_dir=PKG, seed=0):
         self.dir = Path(pkg_dir)
@@ -150,19 +209,17 @@ class OnnxTts:
 
             if not hasattr(self, "_g2p"):
                 self._g2p = OnnxG2P(self.dir)
-            # per-sentence phrase lists; sentence pauses (0.28s) stay longer
-            # than comma/phrase pauses (0.20s), mirroring the server pipeline
+            # per-sentence phrase plans: phrase gaps (0.20/0.26 s) stay
+            # shorter than sentence pauses (0.28 s), mirroring the server
             sentences = []
             for sent in split_sentences(text):
-                phs = [self._g2p.phonemise(p, keep_ezafe=True)
-                       for p in split_phrases(sent)]
-                phs = [p for p in phs if p]
-                if phs:
-                    sentences.append(phs)
-            print("phonemes:", " ".join(" ".join(s) for s in sentences))
+                plan = plan_phrases(sent, self._g2p)
+                if plan:
+                    sentences.append(plan)
+            print("phonemes:", " ".join(" ".join(p for p, _ in s) for s in sentences))
             parts, silence = [], np.zeros(int(0.28 * self.sample_rate), np.float32)
-            for phs in sentences:
-                parts.append(self.synthesize(phs, voice_wav, pace=pace))
+            for plan in sentences:
+                parts.append(self.synthesize(plan, voice_wav, pace=pace))
                 parts.append(silence)
             return np.concatenate(parts[:-1]) if len(parts) > 1 else parts[0]
         return self.synthesize(text, voice_wav, seed=seed, pace=pace)
@@ -185,11 +242,13 @@ class OnnxTts:
                 (cur and cur[-1].endswith("1"))   # marked ezafe pair
                 or w in self._LIGHT_VERBS          # compound verb ("Sekannde miSavad")
             )
-            if over and not bound:
+            if over and not (bound and n <= max_tokens + 4):
                 chunks.append(" ".join(cur))
                 cur = [w]
             else:
                 # bound pairs stay together even if slightly over budget
+                # (hard cap +4: a chained run of ezafe heads must not grow
+                # a chunk into runaway territory, 21+ tokens stop terminating)
                 cur = cur + [w]
         if cur:
             chunks.append(" ".join(cur))
@@ -228,29 +287,39 @@ class OnnxTts:
         """Move words across chunk boundaries so no boundary splits a bound
         phrase. Each rule moves the previous chunk's LAST word down, then the
         same boundary is re-checked (rules chain):
-        (a) an ezafe-marked word ("X1") must not START a chunk — its head noun
-            would be stranded ("fAylhA | ruye1 vindoz");
-        (b) a function word must not END a chunk ("... Savad dar | mostanadAt");
-        (c) a conjunction must not START a chunk ("... pAydAr | va qAbele ...")
+        (a) an ezafe-marked head ("X1") must not END a chunk — its modifier
+            is stranded in the next chunk ("... ?ettesAlAte1 | momken");
+        (b) an ezafe phrase should not START a chunk detached from the word
+            it attaches to ("fAylhA | ruye1 vindoz");
+        (c) a function word must not END a chunk ("... Savad dar | mostanadAt");
+        (d) a conjunction must not START a chunk ("... pAydAr | va qAbele ...")
             — it binds to its left operand;
-        (d) unmarked compounds: G2P does not always emit the "1" marker (ZWNJ
+        (e) unmarked compounds: G2P does not always emit the "1" marker (ZWNJ
             compounds like قابل‌اعتماد come out as "qAbele ?e?temAd"), so an
             "…e | ?…" pattern across a boundary is treated as a broken word.
+        Rules (b)-(e) never move a word that is itself bound to its LEFT
+        neighbour (an ezafe modifier "…?ettesAlAte1 momken", or a light verb
+        "Sekannde miSavad") — that would trade one split for a worse one
+        (this is exactly how "اتصالات | ممکن" used to get broken).
         """
         i = 1
         while i < len(chunks):
             prev, nxt = chunks[i - 1].split(), chunks[i].split()
+            left_bound = len(prev) >= 2 and (
+                prev[-2].endswith("1") or prev[-1] in self._LIGHT_VERBS)
             bad = False
             if len(prev) > min_words:
-                if nxt and nxt[0].endswith("1"):
-                    bad = True      # (a) marked ezafe head stranded
-                elif prev and prev[-1] in self._FUNCTION_WORDS:
-                    bad = True      # (b) dangling preposition/conjunction
-                elif nxt and nxt[0] in self._CONJUNCTIONS:
-                    bad = True      # (c) conjunction split from its operand
-                elif (prev and nxt and prev[-1].endswith("e")
-                      and nxt[0].startswith("?")):
-                    bad = True      # (d) unmarked compound split (qAbele | ?e?temAd)
+                if prev[-1].endswith("1"):
+                    bad = True      # (a) marked ezafe head at chunk end
+                elif not left_bound and nxt and nxt[0].endswith("1"):
+                    bad = True      # (b) ezafe phrase detached from its host
+                elif not left_bound and prev[-1] in self._FUNCTION_WORDS:
+                    bad = True      # (c) dangling preposition/conjunction
+                elif not left_bound and nxt and nxt[0] in self._CONJUNCTIONS:
+                    bad = True      # (d) conjunction split from its operand
+                elif (not left_bound and prev[-1].endswith("e")
+                      and nxt and nxt[0].startswith("?")):
+                    bad = True      # (e) unmarked compound split (qAbele | ?e?temAd)
             if bad:
                 chunks[i - 1] = " ".join(prev[:-1])
                 chunks[i] = prev[-1] + " " + chunks[i]
@@ -272,26 +341,25 @@ class OnnxTts:
         voice_cache, voice_off = self.voice_cache(voice_wav)
 
         if isinstance(phonemes, str):
-            phrases = [phonemes]
+            phrases = [(phonemes, None)]
         else:
-            phrases = [p for p in phonemes if p.strip()]
-        # very short lead-ins (<4 words) read badly as standalone chunks —
-        # merge them forward into the next phrase
-        merged: list[str] = []
-        for p in phrases:
-            if merged and len(merged[-1].split()) < 4:
-                merged[-1] += " " + p
-            else:
-                merged.append(p)
-        if len(merged) >= 2 and len(merged[-1].split()) < 4:
-            merged[-2] += " " + merged.pop()
-        phrases = merged
+            phrases = [p if isinstance(p, tuple) else (p, None) for p in phonemes]
+        phrases = [(p.strip(), g) for p, g in phrases if p and p.strip()]
+        # NOTE: tiny-phrase merging is deliberately NOT done here. It needs
+        # the original punctuation, so it lives in the text layer
+        # (plan_phrases / merge_short_phrases); merging again here would
+        # re-absorb a short colon lead-in that the caller kept standalone.
 
         segments = []  # (audio, gap_before_seconds)
-        for pi, phrase in enumerate(phrases):
+        for pi, (phrase, pgap) in enumerate(phrases):
             for ci, chunk in enumerate(self.chunk_phonemes(phrase)):
                 audio = self._generate_with_retry(voice_cache, voice_off, chunk)
-                gap = 0.0 if (pi == 0 and ci == 0) else (0.20 if ci == 0 else 0.12)
+                if pi == 0 and ci == 0:
+                    gap = 0.0
+                elif ci == 0:
+                    gap = pgap if pgap is not None else 0.20
+                else:
+                    gap = 0.12
                 segments.append((audio, gap))
         audio = self._stitch(segments)
         if abs(pace - 1.0) >= 0.03:
@@ -303,24 +371,46 @@ class OnnxTts:
         return audio.astype(np.float32)
 
     def _generate_with_retry(self, voice_cache, voice_off, chunk, attempts=2):
-        """Generate one chunk, retrying if its SPEECH is too short (early EOS
-        = dropped words) — stochastic per the model card. Returns the decoded
-        audio trimmed to actual speech. The check uses speech duration, not
-        latent count: the model often trails 1-2 s of near-silence before EOS,
-        which would mask a broken chunk."""
+        """Generate one chunk, retrying when quality is bad: (1) speech too
+        short = early EOS = dropped words, (2) speech too long = runaway,
+        (3) a long mid-chunk silence — the model sometimes goes quiet for
+        0.4-0.7 s at a random word, heard as a weird mid-phrase stop. All
+        stochastic per the model card; a fresh attempt usually lands clean.
+        Returns the decoded audio trimmed to actual speech. The duration
+        check uses speech, not latent count: the model often trails 1-2 s
+        of near-silence before EOS, masking a broken chunk."""
         tokens = len(self.sp.encode(chunk, out_type=int))
         expected_speech = tokens / self.tps_est  # ~seconds of speech
-        best = None
+        best, best_key = None, None
         for _ in range(attempts):
             latents, _, _ = self._generate_chunk(voice_cache.copy(), voice_off, chunk)
             audio = self._decode_all(latents)
             s0, e0 = self._speech_bounds(audio)
-            if best is None or (e0 - s0) > (best[2] - best[1]):
-                best = (audio, s0, e0)
-            if (e0 - s0) / self.sample_rate >= 0.45 * expected_speech:
+            speech = audio[s0:e0]
+            dur = (e0 - s0) / self.sample_rate
+            dead = self._max_internal_silence(speech)
+            dur_ok = 0.45 * expected_speech <= dur <= 1.6 * expected_speech
+            key = (dur_ok, 0.0 if dead <= 0.35 else -dead, dur)
+            if best_key is None or key > best_key:
+                best, best_key = speech, key
+            if dur_ok and dead <= 0.35:
                 break
-        audio, s0, e0 = best
-        return audio[s0:e0]
+        return best
+
+    def _max_internal_silence(self, speech, rel_floor=0.03) -> float:
+        """Longest quiet run inside a trimmed chunk (dead air the model
+        inserted mid-generation), in seconds."""
+        if len(speech) < 3:
+            return 0.0
+        rms = float(np.sqrt((speech ** 2).mean()))
+        if rms < 1e-6:
+            return 0.0
+        quiet = (np.abs(speech) < rel_floor * rms).astype(np.int8)
+        edges = np.diff(np.concatenate(([0], quiet, [0])))
+        starts, ends = np.where(edges == 1)[0], np.where(edges == -1)[0]
+        if len(starts) == 0:
+            return 0.0
+        return float((ends - starts).max()) / self.sample_rate
 
     def _speech_bounds(self, p, rel_floor=0.03, head_keep=0.02, tail_keep=0.06,
                        min_run=0.03):
@@ -377,12 +467,13 @@ class OnnxTts:
             audio = audio * (0.98 / peak)
         return self._compress_pauses(audio)
 
-    def _compress_pauses(self, audio, max_pause=0.50, keep=0.35, rel_floor=0.03):
-        """The model sometimes goes silent for 1-2 s in the MIDDLE of a chunk
-        before continuing (or before EOS). Long dead-air stretches are
-        shortened to `keep` seconds with small fades, so the flow of speech
-        stays continuous. Natural inter-phrase pauses (< max_pause) and the
-        fixed 0.12 s chunk gaps are untouched."""
+    def _compress_pauses(self, audio, max_pause=0.38, keep=0.28, rel_floor=0.03):
+        """The model sometimes goes silent mid-chunk (or before EOS) even
+        after the retry in _generate_with_retry. Remaining dead-air stretches
+        longer than `max_pause` are shortened to `keep` seconds with small
+        fades, so the flow of speech stays continuous. Deliberate pauses —
+        sentence 0.28 s, colon lead-in 0.26 s, phrase 0.20 s, chunk 0.12 s —
+        all sit below `max_pause` and are untouched."""
         rms = float(np.sqrt((audio ** 2).mean()))
         if rms < 1e-6:
             return audio
