@@ -23,7 +23,9 @@ BASE = Path(__file__).resolve().parent.parent
 PKG = BASE / "model" / "onnx"
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?؟])\s+")
-_PHRASE_SPLIT = re.compile(r"(?<=[،؛:—–,;:])\s+")
+# phrase joints: after punctuation, and around parentheticals — "(...)" is a
+# prosodic unit a reader sets off with small pauses on both sides
+_PHRASE_SPLIT = re.compile(r"(?<=[،؛:—–,;:)])\s+|\s+(?=\()")
 
 
 def split_sentences(text: str) -> list[str]:
@@ -43,28 +45,60 @@ def split_phrases(sentence: str) -> list[str]:
 _STRONG_LEADIN = (":", "؛", "—", "–")
 
 
+def _letter_words(tp: str) -> list[str]:
+    """Words with at least one letter/digit — a lone "—" or "..." is not a
+    word, and counting it as one breaks the phoneme-word-count check."""
+    return [w for w in tp.split() if any(ch.isalnum() for ch in w)]
+
+
 def merge_short_phrases(phrases: list[str], min_words: int = 4,
                         keep_standalone=None) -> list[str]:
     """Very short phrases (< min_words words) read badly as standalone
-    chunks, so they merge into a neighbour — EXCEPT lead-ins ending in
-    strong punctuation: however short, "سؤال اصلی:" must stay standalone
-    because the pause after the colon is exactly what the writer asked for.
-    `keep_standalone(p)` lets the caller veto that protection (an unclean
-    phonemisation). Must run on TEXT (before phonemisation): phonemes carry
-    no punctuation."""
+    chunks, so they merge into a neighbour — EXCEPT phrases ending in
+    strong punctuation: "سؤال اصلی:" is a lead-in and "…است —" ends a
+    dash-delimited aside, and in both cases the pause that follows is the
+    point, so they stay standalone. `keep_standalone(p)` lets the caller
+    veto that protection (an unclean phonemisation). Must run on TEXT
+    (before phonemisation): phonemes carry no punctuation."""
     def _protected(p: str) -> bool:
         return p.rstrip().endswith(_STRONG_LEADIN) and (
             keep_standalone is None or keep_standalone(p))
 
     out: list[str] = []
     for p in phrases:
-        if out and len(out[-1].split()) < min_words and not _protected(out[-1]):
+        if out and len(_letter_words(out[-1])) < min_words and not _protected(out[-1]):
             out[-1] += " " + p
         else:
             out.append(p)
-    if len(out) >= 2 and len(out[-1].split()) < min_words and not _protected(out[-2]):
+    if (len(out) >= 2 and len(_letter_words(out[-1])) < min_words
+            and not _protected(out[-2])):
         out[-2] += " " + out.pop()
     return out
+
+
+# Text-layer prepositions that start a DETACHABLE adjunct ("برای X", "بدون
+# X"). Tight-binding ones (از/با/در/به/تا — "از آن"، "به دست آورد"، "۱ تا ۲")
+# are deliberately excluded: cutting before them reads far worse than wherever
+# the phoneme packer lands.
+_TEXT_PREPS = {"برای", "بدون", "درباره", "مثل"}
+
+
+def split_long_phrase(tp: str, max_words: int = 9) -> list[str]:
+    """A phrase longer than max_words needs 2+ chunks anyway (18-token
+    budget); cut it before its last preposition (>=4 words before, >=3
+    after) so the packer's inevitable break lands at a natural joint like
+    '…سیم‌کشی | برای ساختن…' instead of inside 'یک شبکهٔ عصبی'."""
+    words = tp.split()
+    if len(words) <= max_words:
+        return [tp]
+    cut = None
+    for i, w in enumerate(words):
+        if w in _TEXT_PREPS and i >= 4 and len(words) - i >= 3:
+            cut = i
+    if cut is None:
+        return [tp]
+    return (split_long_phrase(" ".join(words[:cut]), max_words)
+            + split_long_phrase(" ".join(words[cut:]), max_words))
 
 
 def plan_phrases(sentence: str, g2p) -> list[tuple[str, float]]:
@@ -81,10 +115,11 @@ def plan_phrases(sentence: str, g2p) -> list[tuple[str, float]]:
         # tiny phrase (merged text gives the G2P the context it needs).
         if tp not in cache:
             ph = g2p.phonemise(tp, keep_ezafe=True)
-            cache[tp] = bool(ph) and len(ph.split()) == len(tp.split())
+            cache[tp] = bool(ph) and len(ph.split()) == len(_letter_words(tp))
         return cache[tp]
 
-    tps = merge_short_phrases(split_phrases(sentence), keep_standalone=clean)
+    merged = merge_short_phrases(split_phrases(sentence), keep_standalone=clean)
+    tps = [q for tp in merged for q in split_long_phrase(tp)]
     out: list[tuple[str, float]] = []
     prev_tp: str | None = None
     for tp in tps:
@@ -254,10 +289,12 @@ class OnnxTts:
             chunks.append(" ".join(cur))
         chunks = self._fix_boundaries(chunks)
         # a trailing 1-2 token chunk reads badly (the model wants >= a few
-        # tokens); merge it into the previous chunk even slightly over budget
+        # tokens); merge it into the previous chunk even slightly over
+        # budget — but never past 19 tokens (21+ stop terminating)
         if len(chunks) >= 2:
             tail = len(self.sp.encode(chunks[-1], out_type=int))
-            if tail <= 2:
+            merged = len(self.sp.encode(chunks[-2] + " " + chunks[-1], out_type=int))
+            if tail <= 2 and merged <= 19:
                 chunks[-2] = chunks[-2] + " " + chunks[-1]
                 chunks.pop()
         return [c.replace("1", "") for c in chunks]
@@ -370,17 +407,60 @@ class OnnxTts:
                                  stretch_factor=pace).reshape(-1)
         return audio.astype(np.float32)
 
-    def _generate_with_retry(self, voice_cache, voice_off, chunk, attempts=2):
-        """Generate one chunk, retrying when quality is bad: (1) speech too
-        short = early EOS = dropped words, (2) speech too long = runaway,
-        (3) a long mid-chunk silence — the model sometimes goes quiet for
-        0.4-0.7 s at a random word, heard as a weird mid-phrase stop. All
-        stochastic per the model card; a fresh attempt usually lands clean.
-        Returns the decoded audio trimmed to actual speech. The duration
-        check uses speech, not latent count: the model often trails 1-2 s
-        of near-silence before EOS, masking a broken chunk."""
+    def _dead_air_regions(self, p, rel_floor=0.03, win=0.25, density=0.90):
+        """Spans of dead air the model inserted mid-chunk, as (start, end)
+        sample indices. Windowed quiet-density based: the model scatters
+        tiny blips through its silences, which chop a 1.2 s pause into sub-
+        threshold runs that defeat any longest-run check. A region needs
+        >=density of a win-second window below rel_floor*rms, then expands
+        to its true quiet boundaries."""
+        rms = float(np.sqrt((p ** 2).mean()))
+        if rms < 1e-6 or len(p) < 3:
+            return []
+        sr = self.sample_rate
+        quiet = np.abs(p) < rel_floor * rms
+        w = max(1, int(win * sr))
+        dens = np.convolve(quiet.astype(np.float32),
+                           np.ones(w, np.float32) / w, mode="same")
+        solid = dens >= density
+        edges = np.diff(np.concatenate(([0], solid.astype(np.int8), [0])))
+        starts, ends = np.where(edges == 1)[0], np.where(edges == -1)[0]
+        out = []
+        for a, b in zip(starts, ends):
+            i, j = int(a), int(b)
+            while i > 0 and quiet[i - 1]:
+                i -= 1
+            while j < len(p) and quiet[j]:
+                j += 1
+            out.append((i, j))
+        merged: list[tuple[int, int]] = []
+        for i, j in out:
+            if merged and i <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], j))
+            else:
+                merged.append((i, j))
+        return merged
+
+    def _generate_with_retry(self, voice_cache, voice_off, chunk, attempts=3):
+        """Generate one chunk, retrying when quality is bad. Failure modes,
+        all stochastic per the model card; a fresh attempt usually lands
+        clean:
+        (1) near-silent output (a generation that EOS'd into nothing) —
+            caught by an ABSOLUTE rms floor, because every relative check
+            is blind on a silent chunk (its own rms is ~0, so all of it
+            looks "loud" and none of it looks "quiet");
+        (2) speech too short = early EOS = dropped words, or too long =
+            runaway (the manifest's tps_est=3 is ~2x conservative vs the
+            real 4-7 tokens/s, so the window is wide);
+        (3) a long mid-chunk dead-air stretch — the model sometimes goes
+            quiet for ~1 s at a random word, heard as a weird mid-phrase
+            stop (measured windowed, so noise blips inside the silence
+            cannot hide it).
+        Preference order when no attempt is fully clean: loud beats silent,
+        in-window beats out, less dead air, then longer (dropped words
+        read short). Returns decoded audio trimmed to actual speech."""
         tokens = len(self.sp.encode(chunk, out_type=int))
-        expected_speech = tokens / self.tps_est  # ~seconds of speech
+        expected_speech = tokens / self.tps_est  # ~seconds (conservative)
         best, best_key = None, None
         for _ in range(attempts):
             latents, _, _ = self._generate_chunk(voice_cache.copy(), voice_off, chunk)
@@ -388,29 +468,17 @@ class OnnxTts:
             s0, e0 = self._speech_bounds(audio)
             speech = audio[s0:e0]
             dur = (e0 - s0) / self.sample_rate
-            dead = self._max_internal_silence(speech)
-            dur_ok = 0.45 * expected_speech <= dur <= 1.6 * expected_speech
-            key = (dur_ok, 0.0 if dead <= 0.35 else -dead, dur)
+            rms = float(np.sqrt((speech ** 2).mean()))
+            loud_ok = rms >= 0.02
+            regions = self._dead_air_regions(speech)
+            dead = max((j - i) for i, j in regions) / self.sample_rate if regions else 0.0
+            dur_ok = 0.35 * expected_speech <= dur <= 1.6 * expected_speech
+            key = (loud_ok, dur_ok, 0.0 if dead <= 0.35 else -dead, dur)
             if best_key is None or key > best_key:
                 best, best_key = speech, key
-            if dur_ok and dead <= 0.35:
+            if loud_ok and dur_ok and dead <= 0.35:
                 break
         return best
-
-    def _max_internal_silence(self, speech, rel_floor=0.03) -> float:
-        """Longest quiet run inside a trimmed chunk (dead air the model
-        inserted mid-generation), in seconds."""
-        if len(speech) < 3:
-            return 0.0
-        rms = float(np.sqrt((speech ** 2).mean()))
-        if rms < 1e-6:
-            return 0.0
-        quiet = (np.abs(speech) < rel_floor * rms).astype(np.int8)
-        edges = np.diff(np.concatenate(([0], quiet, [0])))
-        starts, ends = np.where(edges == 1)[0], np.where(edges == -1)[0]
-        if len(starts) == 0:
-            return 0.0
-        return float((ends - starts).max()) / self.sample_rate
 
     def _speech_bounds(self, p, rel_floor=0.03, head_keep=0.02, tail_keep=0.06,
                        min_run=0.03):
@@ -468,34 +536,32 @@ class OnnxTts:
         return self._compress_pauses(audio)
 
     def _compress_pauses(self, audio, max_pause=0.38, keep=0.28, rel_floor=0.03):
-        """The model sometimes goes silent mid-chunk (or before EOS) even
-        after the retry in _generate_with_retry. Remaining dead-air stretches
-        longer than `max_pause` are shortened to `keep` seconds with small
-        fades, so the flow of speech stays continuous. Deliberate pauses —
-        sentence 0.28 s, colon lead-in 0.26 s, phrase 0.20 s, chunk 0.12 s —
-        all sit below `max_pause` and are untouched."""
-        rms = float(np.sqrt((audio ** 2).mean()))
-        if rms < 1e-6:
+        """Remaining dead-air stretches (whatever survived the retry in
+        _generate_with_retry) longer than `max_pause` are shortened to
+        `keep` seconds with small fades, so the flow of speech stays
+        continuous. Regions come from windowed quiet density — the model
+        peppers its silences with tiny blips that would chop a 1 s pause
+        into sub-threshold runs. Deliberate pauses — sentence 0.28 s,
+        colon lead-in 0.26 s, phrase 0.20 s, chunk 0.12 s — stay below
+        `max_pause` untouched."""
+        regions = [r for r in self._dead_air_regions(audio, rel_floor=rel_floor)
+                   if (r[1] - r[0]) > int(max_pause * self.sample_rate)]
+        if not regions:
             return audio
-        quiet = (np.abs(audio) < rel_floor * rms).astype(np.int8)
         sr = self.sample_rate
         f = max(1, int(0.008 * sr))
-        edges = np.diff(np.concatenate(([0], quiet, [0])))
-        starts = np.where(edges == 1)[0]
-        ends = np.where(edges == -1)[0]
         out, pos = [], 0
-        for a, b in zip(starts, ends):
-            if (b - a) > int(max_pause * sr):
-                out.append(audio[pos:a])
-                seg = audio[a : min(a + int(keep * sr), b)].copy()
-                if len(seg) > 2 * f:
-                    seg[-f:] *= np.linspace(1.0, 0.0, f, dtype=np.float32)
-                out.append(seg)
-                nxt = audio[b : b + f]
-                if len(nxt) == f:
-                    nxt = (nxt * np.linspace(0.0, 1.0, f, dtype=np.float32)).astype(np.float32)
-                out.append(nxt)
-                pos = b + f
+        for a, b in regions:
+            out.append(audio[pos:a])
+            seg = audio[a : min(a + int(keep * sr), b)].copy()
+            if len(seg) > 2 * f:
+                seg[-f:] *= np.linspace(1.0, 0.0, f, dtype=np.float32)
+            out.append(seg)
+            nxt = audio[b : b + f]
+            if len(nxt) == f:
+                nxt = (nxt * np.linspace(0.0, 1.0, f, dtype=np.float32)).astype(np.float32)
+            out.append(nxt)
+            pos = b + f
         out.append(audio[pos:])
         return np.concatenate(out)
 

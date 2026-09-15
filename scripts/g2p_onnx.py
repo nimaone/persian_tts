@@ -49,14 +49,24 @@ _LETTER_NAMES = {
     "s": "اس", "t": "تی", "u": "یو", "v": "وی", "w": "دبلیو", "x": "ایکس",
     "y": "وای", "z": "زد",
 }
+# Common English words whose letter-by-letter transliteration comes out
+# wrong; Persian tech convention instead (echo -> اکو not چاو, network ->
+# نت‌ورک not نتواورک, windows -> ویندوز not وینداووس).
+_LATIN_EXCEPTIONS = {
+    "echo": "اکو", "state": "استیت", "network": "نت‌ورک",
+    "windows": "ویندوز", "notebook": "نوت‌بوک", "photoshop": "فتوشاپ",
+    "python": "پایتون",
+}
 _LATIN_WORD = re.compile("[A-Za-z][A-Za-z'-]*")
 _CLUSTER_START = set("پتکبجچذژزصضثفگسش")
 
 
 def _transliterate_word(w: str) -> str:
+    lw = w.lower()
+    if lw in _LATIN_EXCEPTIONS:
+        return _LATIN_EXCEPTIONS[lw]
     if w.isupper() and 2 <= len(w) <= 5 and w.isalpha():
         return "‌".join(_LETTER_NAMES[c] for c in w.lower())
-    lw = w.lower()
     out, i = [], 0
     while i < len(lw):
         two = lw[i : i + 2]
@@ -72,6 +82,10 @@ def _transliterate_word(w: str) -> str:
         s = "ا" + s
     return s or w
 TO_PHONEMES = str.maketrans({"/": "a", "a": "A", "@": "?", "$": "S", "c": "C"})
+
+# GE2P contextual misreadings, fixed on the phoneme output: "بعد همین..."
+# comes out "bo?d" (= بود) while "بعد از..." is correctly "ba?d".
+_PRON_FIX = {"bo?d": "ba?d"}
 
 
 def encode(text: str) -> list[int]:
@@ -114,6 +128,7 @@ class OnnxG2P:
         # noun phrase ("?eqtesAde1 ?AmrikA"); it is stripped per chunk before
         # the TTS model sees the text.
         out = raw.translate(TO_PHONEMES)
+        out = " ".join(_PRON_FIX.get(w, w) for w in out.split())
         return out if keep_ezafe else out.replace("1", "")
 
 
