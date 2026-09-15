@@ -93,6 +93,33 @@ TO_PHONEMES = str.maketrans({"/": "a", "a": "A", "@": "?", "$": "S", "c": "C"})
 # comes out "bo?d" (= بود) while "بعد از..." is correctly "ba?d".
 _PRON_FIX = {"bo?d": "ba?d"}
 
+# The G2P degrades on long inputs: clean to ~40 words, repetitive collage
+# from ~45 (measured on natural text; an earlier audit saw 5% failures
+# already at 30). Punctuation normally keeps phrases far below this — the
+# hole is a run-on sentence with no punctuation and no detachable
+# preposition, which would reach the G2P whole. Split such text at a
+# conjunction (fallback: hard cut) so no G2P call exceeds the window;
+# windows are decoded separately and their phonemes rejoined, so callers
+# still get one string.
+_G2P_WINDOW_WORDS = 30
+_G2P_CUT_WORDS = {"و", "یا", "ولی", "اما", "که", "زیرا", "چون", "پس",
+                  "سپس", "بنابراین", "همچنین"}
+
+
+def _g2p_windows(text: str) -> list[str]:
+    words = text.split()
+    if len(words) <= _G2P_WINDOW_WORDS:
+        return [text]
+    cut = None
+    for i in range(_G2P_WINDOW_WORDS // 2,
+                   min(len(words) - 4, _G2P_WINDOW_WORDS - 3)):
+        if words[i] in _G2P_CUT_WORDS:
+            cut = i
+    if cut is None:
+        cut = _G2P_WINDOW_WORDS // 2
+    return (_g2p_windows(" ".join(words[:cut]))
+            + _g2p_windows(" ".join(words[cut:])))
+
 
 def transliterate_text(text: str) -> str:
     """Latin -> Persian transliteration only (the text pre-processing step
@@ -122,14 +149,7 @@ class OnnxG2P:
         self.s_dec = ort.InferenceSession(str(pkg_dir / "g2p_decoder.onnx"), opts, providers=prov)
         self.max_len = 512
 
-    def phonemise(self, text: str, keep_ezafe: bool = False) -> str:
-        text = _LATIN_WORD.sub(lambda m: _transliterate_word(m.group(0)), text)
-        text = normalize_for_model(text)
-        # normalize keeps ":" — and a trailing colon makes GE2P repeat the
-        # final word ("باقی‌ماندهٔ صادقانه:" -> "…sAdeqAne sAdeqAne",
-        # "نکته:" -> "nokte nokte"); the punctuation's prosodic job is done
-        # by the phrase splitter, so it is worthless to the G2P anyway
-        text = text.replace("؟", "").replace("?", "").replace(":", "")
+    def _decode_greedy(self, text: str) -> str:
         ids = encode(text)
         if not ids:
             return ""
@@ -144,7 +164,17 @@ class OnnxG2P:
             if nxt == EOS:
                 break
             dec.append(nxt)
-        raw = decode(dec[1:])
+        return decode(dec[1:])
+
+    def phonemise(self, text: str, keep_ezafe: bool = False) -> str:
+        text = _LATIN_WORD.sub(lambda m: _transliterate_word(m.group(0)), text)
+        text = normalize_for_model(text)
+        # normalize keeps ":" — and a trailing colon makes GE2P repeat the
+        # final word ("باقی‌ماندهٔ صادقانه:" -> "…sAdeqAne sAdeqAne",
+        # "نکته:" -> "nokte nokte"); the punctuation's prosodic job is done
+        # by the phrase splitter, so it is worthless to the G2P anyway
+        text = text.replace("؟", "").replace("?", "").replace(":", "")
+        raw = " ".join(self._decode_greedy(w) for w in _g2p_windows(text))
         # "1" marks the ezafe. The chunker needs it to avoid splitting a bound
         # noun phrase ("?eqtesAde1 ?AmrikA"); it is stripped per chunk before
         # the TTS model sees the text.
