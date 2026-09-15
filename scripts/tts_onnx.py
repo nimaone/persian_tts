@@ -154,8 +154,10 @@ def merge_leading_light_verbs(phrases: list[str]) -> list[str]:
 def plan_phrases(sentence: str, g2p, tokenizer=None) -> list[tuple[str, float]]:
     """One text sentence -> [(phonemes, gap_before_seconds), ...].
     Punctuation-aware splitting AND tiny-phrase merging happen here, where
-    the punctuation is still visible. Gap: 0.20 s at a normal phrase start,
-    0.26 s after a colon/semicolon lead-in — how a reader delivers it.
+    the punctuation is still visible. Gaps mirror how a reader delivers
+    the text: 0.16 s at a comma (a short breath), 0.26 s after a strong
+    lead-in (colon/semicolon/dash). The sentence-final pause (0.45 s) is
+    inserted by the caller, outside the per-sentence synthesis.
     `tokenizer` (the engine's SentencePiece model) gates split_long_phrase
     on the real budget — phoneme TOKENS, not text words: a 10-word phrase
     of short words is ~17 tokens and fits one chunk, so splitting it only
@@ -197,8 +199,8 @@ def plan_phrases(sentence: str, g2p, tokenizer=None) -> list[tuple[str, float]]:
             ph = ph_tp if q == tp else g2p.phonemise(q, keep_ezafe=True)
             if not ph:
                 continue
-            strong = prev_tp is not None and prev_tp.rstrip().endswith((":", "؛"))
-            out.append((ph, 0.26 if strong else 0.20))
+            strong = prev_tp is not None and prev_tp.rstrip().endswith(_STRONG_LEADIN)
+            out.append((ph, 0.26 if strong else 0.16))
             prev_tp = q
     return out
 
@@ -345,15 +347,16 @@ class OnnxTts:
 
             if not hasattr(self, "_g2p"):
                 self._g2p = OnnxG2P(self.dir)
-            # per-sentence phrase plans: phrase gaps (0.20/0.26 s) stay
-            # shorter than sentence pauses (0.28 s), mirroring the server
+            # per-sentence phrase plans: phrase gaps (0.16/0.26 s) stay
+            # clearly shorter than sentence pauses (0.45 s), mirroring the
+            # server — a reader breathes at a comma but stops at a period
             sentences = []
             for sent in split_sentences(text):
                 plan = plan_phrases(sent, self._g2p, self.sp)
                 if plan:
                     sentences.append(plan)
             print("phonemes:", " ".join(" ".join(p for p, _ in s) for s in sentences))
-            parts, silence = [], np.zeros(int(0.28 * self.sample_rate), np.float32)
+            parts, silence = [], np.zeros(int(0.45 * self.sample_rate), np.float32)
             for plan in sentences:
                 parts.append(self.synthesize(plan, voice_wav, pace=pace))
                 parts.append(silence)
@@ -578,7 +581,7 @@ class OnnxTts:
                 if pi == 0 and ci == 0:
                     gap = 0.0
                 elif ci == 0:
-                    gap = pgap if pgap is not None else 0.20
+                    gap = pgap if pgap is not None else 0.16
                 else:
                     gap = 0.12
                 jobs.append((chunk, gap))
@@ -797,9 +800,10 @@ class OnnxTts:
         `keep` seconds with small fades, so the flow of speech stays
         continuous. Regions come from windowed quiet density — the model
         peppers its silences with tiny blips that would chop a 1 s pause
-        into sub-threshold runs. Deliberate pauses — sentence 0.28 s,
-        colon lead-in 0.26 s, phrase 0.20 s, chunk 0.12 s — stay below
-        `max_pause` untouched."""
+        into sub-threshold runs. Deliberate intra-sentence pauses — strong
+        lead-in 0.26 s, phrase 0.16 s, chunk 0.12 s — stay below `max_pause`
+        untouched; the 0.45 s sentence pause is inserted by the caller,
+        outside this pass."""
         regions = [r for r in self._dead_air_regions(audio, rel_floor=rel_floor)
                    if (r[1] - r[0]) > int(max_pause * self.sample_rate)]
         if not regions:

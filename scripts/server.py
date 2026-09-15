@@ -31,7 +31,8 @@ UPLOAD_DIR = BASE / "uploads" / "voices"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 SR = 24000
-PAUSE_S = 0.25          # pause between sentences (model card recommendation)
+PAUSE_S = 0.45          # pause between sentences — a real reader stops at a
+                        # period, not just breathes (comma is 0.16 in the engine)
 MAX_TEXT = 800          # keep demo requests bounded
 MAX_VOICES = 64
 
