@@ -1,0 +1,21 @@
+# ---- مسیر torch (scripts/tts.py) ----
+# توجه: نسخه PyPI سه فلگ فارسی را ندارد؛ بعد از نصب، سه فایل فورک را
+# جایگزین کنید (utils/config.py, models/text_chunking.py, models/tts_model.py)
+# از https://cdn.jsdelivr.net/gh/mallahyari/pocket-tts@main/<مسیر>
+# جزئیات: docs/onnx-feasibility.md
+pocket-tts==3.1.0
+transformers>=4.40
+soundfile>=0.12
+
+# ---- مسیر ONNX (scripts/tts_onnx.py و دموی وب) — بدون torch ----
+onnxruntime>=1.19
+onnx>=1.16
+onnxscript          # فقط برای ساخت مجدد پکیج (scripts/export_unified.py)
+pedalboard>=0.9     # کنترل سرعت گفتار (time-stretch)
+fastapi>=0.100
+uvicorn>=0.13
+
+# ---- مشترک ----
+numpy>=2
+scipy>=1.5
+sentencepiece>=0.2.1

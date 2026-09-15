@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+env/
+
+# Model weights — large binaries, regenerable:
+#   model/onnx/  -> scripts/export_unified.py (needs model/v2 + model/g2p)
+#   model/v2, model/g2p -> downloaded from HuggingFace (see README)
+model/
+
+# Runtime artifacts
+output/
+uploads/
+tmp/
+*.log
+
+# OS / editors
+.DS_Store
+Thumbs.db
