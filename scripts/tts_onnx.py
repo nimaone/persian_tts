@@ -72,7 +72,12 @@ def merge_short_phrases(phrases: list[str], min_words: int = 4,
             out.append(p)
     if (len(out) >= 2 and len(_letter_words(out[-1])) < min_words
             and not _protected(out[-2])):
-        out[-2] += " " + out.pop()
+        # NB: pop BEFORE the store — `out[-2] += " " + out.pop()` would
+        # resolve the store index AFTER the list shrank, silently
+        # overwriting the phrase one slot earlier (dropped + duplicated
+        # phrases, heard as missing words).
+        last = out.pop()
+        out[-1] += " " + last
     return out
 
 
