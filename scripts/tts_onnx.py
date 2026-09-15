@@ -330,22 +330,22 @@ class OnnxTts:
                 # 1. right after a light verb (it completes its host, and
                 #    what follows starts a fresh unit: "…jadidi miSavad |
                 #    Sabake rA beture…" beats "…Sabake rA | beture…")
-                # 2. before a preposition the break would strand (at most
+                # 2. right after the object marker "rA" (end of the object
+                #    NP = start of the predicate — always a safe joint:
+                #    "…?amalkard rA | bA hazineye kamtari be dast ?Avardand"
+                #    keeps the final verb phrase in one breath)
+                # 3. before a preposition the break would strand (at most
                 #    one word between prep and break: "…biStar | ?az
                 #    SabakehAye …" not "…?az SabakehAye | tasAdofi …")
-                # 3. right after "rA" (noun + object complete)
                 cut = len(cur)
                 for k in range(len(cur) - 1, max(len(cur) - 5, -1), -1):
-                    if cur[k] in self._LIGHT_VERBS:
+                    if cur[k] in self._LIGHT_VERBS or cur[k] == "rA":
                         cut = k + 1
                         break
                 if cut == len(cur):
                     for k in range(len(cur) - 1, max(len(cur) - 3, -1), -1):
                         if cur[k] in self._PREPS and len(cur) - k <= 2:
                             cut = k
-                            break
-                        if cur[k] == "rA" and len(cur) - k <= 2:
-                            cut = k + 1
                             break
                 if cut >= 3:
                     chunks.append(" ".join(cur[:cut]))
@@ -389,13 +389,16 @@ class OnnxTts:
     # down to keep the pair intact.
     _CONJUNCTIONS = {"va", "yA", "vali", "amA", "hattA", "ke", "rA"}
     # Persian light verbs complete the previous word's compound verb
-    # ("Sekannde miSavad"); breaking right before one splits the verb.
+    # ("Sekannde miSavad", "neSAn dAdand"); breaking right before one splits
+    # the verb. NB: GE2P writes long-a as "A" — the dah-family is "dAd…",
+    # never "dad…" (a lowercase typo there silently disables the rule).
     _LIGHT_VERBS = {
         "miSavad", "miSavand", "miSavam", "miSavid", "miSavim",
         "Savad", "Savand", "Sod", "Sodand", "Sodan",
         "mikonad", "mikonand", "mikonam", "mikonid", "mikonim",
         "kard", "karde", "konad", "konand",
-        "dahad", "dahand", "dad", "dade",
+        "dAd", "dAde", "dAdand", "dAdam", "dAdi", "dAdim", "dAdid",
+        "dAhad", "dAhand", "midAd", "midAdand",
         "dArad", "dArand", "dAsht", "Ast", "?ast", "bud", "budand",
     }
 
