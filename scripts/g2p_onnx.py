@@ -55,13 +55,19 @@ _LETTER_NAMES = {
 _LATIN_EXCEPTIONS = {
     "echo": "اکو", "state": "استیت", "network": "نت‌ورک",
     "windows": "ویندوز", "notebook": "نوت‌بوک", "photoshop": "فتوشاپ",
-    "python": "پایتون",
+    "python": "پایتون", "recurrency": "ریکارانسی",
 }
 _LATIN_WORD = re.compile("[A-Za-z][A-Za-z'-]*")
 _CLUSTER_START = set("پتکبجچذژزصضثفگسش")
 
 
 def _transliterate_word(w: str) -> str:
+    # hyphenated compounds transliterate part by part ("self-recurrency" ->
+    # "سلف ریکارانسی", not the letter-mush of the whole run)
+    if "-" in w.strip("-"):
+        parts = [p for p in w.split("-") if p]
+        if len(parts) > 1:
+            return " ".join(_transliterate_word(p) for p in parts)
     lw = w.lower()
     if lw in _LATIN_EXCEPTIONS:
         return _LATIN_EXCEPTIONS[lw]
@@ -86,6 +92,14 @@ TO_PHONEMES = str.maketrans({"/": "a", "a": "A", "@": "?", "$": "S", "c": "C"})
 # GE2P contextual misreadings, fixed on the phoneme output: "بعد همین..."
 # comes out "bo?d" (= بود) while "بعد از..." is correctly "ba?d".
 _PRON_FIX = {"bo?d": "ba?d"}
+
+
+def transliterate_text(text: str) -> str:
+    """Latin -> Persian transliteration only (the text pre-processing step
+    of phonemise, without the G2P). Lets callers count the words the G2P
+    will actually see ("self-recurrency" is ONE text word but TWO Persian
+    words after transliteration)."""
+    return _LATIN_WORD.sub(lambda m: _transliterate_word(m.group(0)), text)
 
 
 def encode(text: str) -> list[int]:

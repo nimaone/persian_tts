@@ -101,6 +101,37 @@ def split_long_phrase(tp: str, max_words: int = 9) -> list[str]:
             + split_long_phrase(" ".join(words[cut:]), max_words))
 
 
+# Light verbs in TEXT form (ZWNJ/space-stripped). A phrase must not START
+# with one: the TTS model refuses to lead an utterance with a bare verbal
+# enclitic and drops the word — "…جدیدی — | می‌شود شبکه را…" loses «می‌شود»
+# on every voice — while «دیده می‌شود» at a chunk end reads fine.
+_TEXT_LIGHT_VERBS = {
+    "است", "هست", "هستم", "هستی", "هستیم", "هستید", "هستند",
+    "بود", "بودم", "بودی", "بودیم", "بودید", "بودند", "باشد", "باشند",
+    "شد", "شدم", "شدی", "شدیم", "شدید", "شدند", "شود", "شوند",
+    "کرد", "کردم", "کردی", "کردیم", "کردید", "کردند",
+    "کنم", "کنی", "کند", "کنیم", "کنید", "کنند",
+    "میشود", "میشوند", "میکند", "میکنند", "میکرد", "میکردند",
+    "میباشد", "میباشند",
+}
+
+
+def merge_leading_light_verbs(phrases: list[str]) -> list[str]:
+    """Merge any phrase that starts with a light verb into the previous
+    phrase, so the verb follows its host word and is actually spoken. The
+    dash/colon pause that preceded it gives way to a small intra-chunk gap
+    after the verb — a minor prosody cost against a dropped word."""
+    out: list[str] = []
+    for p in phrases:
+        words = _letter_words(p)
+        first = words[0].strip("«»()\"'.,;:!?،؛:-") if words else ""
+        if out and first.replace("\u200c", "") in _TEXT_LIGHT_VERBS:
+            out[-1] += " " + p
+        else:
+            out.append(p)
+    return out
+
+
 def plan_phrases(sentence: str, g2p) -> list[tuple[str, float]]:
     """One text sentence -> [(phonemes, gap_before_seconds), ...].
     Punctuation-aware splitting AND tiny-phrase merging happen here, where
@@ -113,12 +144,17 @@ def plan_phrases(sentence: str, g2p) -> list[tuple[str, float]]:
         # lead-in may only stand alone if its phoneme word count matches
         # its text word count; otherwise it merges forward like any other
         # tiny phrase (merged text gives the G2P the context it needs).
+        # The text side is transliterated first — "self-recurrency" is one
+        # text word but two Persian words by the time the G2P sees it.
         if tp not in cache:
+            from g2p_onnx import transliterate_text
             ph = g2p.phonemise(tp, keep_ezafe=True)
-            cache[tp] = bool(ph) and len(ph.split()) == len(_letter_words(tp))
+            want = len(_letter_words(transliterate_text(tp)))
+            cache[tp] = bool(ph) and len(ph.split()) == want
         return cache[tp]
 
     merged = merge_short_phrases(split_phrases(sentence), keep_standalone=clean)
+    merged = merge_leading_light_verbs(merged)
     tps = [q for tp in merged for q in split_long_phrase(tp)]
     out: list[tuple[str, float]] = []
     prev_tp: str | None = None
@@ -259,6 +295,12 @@ class OnnxTts:
             return np.concatenate(parts[:-1]) if len(parts) > 1 else parts[0]
         return self.synthesize(text, voice_wav, seed=seed, pace=pace)
 
+    # Phonetic prepositions: when a forced chunk break lands just after a
+    # preposition's first word or two, the PP has barely started — the break
+    # moves back to before the preposition ("…biStar | ?az SabakehAye …"
+    # reads far better than "…?az SabakehAye | tasAdofi …").
+    _PREPS = {"?az", "bA", "dar", "be", "barAye", "tA", "ruye", "bedune", "vase"}
+
     def chunk_phonemes(self, phonemes: str, max_tokens: int = 18) -> list[str]:
         """Word-boundary packing of a phoneme string into model-sized chunks.
 
@@ -275,11 +317,38 @@ class OnnxTts:
             over = cur and n > max_tokens
             bound = (
                 (cur and cur[-1].endswith("1"))   # marked ezafe pair
-                or w in self._LIGHT_VERBS          # compound verb ("Sekannde miSavad")
+                or w in self._LIGHT_VERBS         # compound verb ("Sekannde miSavad")
+                or w == "rA"                      # object marker clings to its noun
             )
             if over and not (bound and n <= max_tokens + 4):
-                chunks.append(" ".join(cur))
-                cur = [w]
+                # a break is forced — pick the best joint near the overflow:
+                # 1. right after a light verb (it completes its host, and
+                #    what follows starts a fresh unit: "…jadidi miSavad |
+                #    Sabake rA beture…" beats "…Sabake rA | beture…")
+                # 2. before a preposition the break would strand (at most
+                #    one word between prep and break: "…biStar | ?az
+                #    SabakehAye …" not "…?az SabakehAye | tasAdofi …")
+                # 3. right after "rA" (noun + object complete)
+                cut = len(cur)
+                for k in range(len(cur) - 1, max(len(cur) - 5, -1), -1):
+                    if cur[k] in self._LIGHT_VERBS:
+                        cut = k + 1
+                        break
+                if cut == len(cur):
+                    for k in range(len(cur) - 1, max(len(cur) - 3, -1), -1):
+                        if cur[k] in self._PREPS and len(cur) - k <= 2:
+                            cut = k
+                            break
+                        if cur[k] == "rA" and len(cur) - k <= 2:
+                            cut = k + 1
+                            break
+                if cut >= 3:
+                    chunks.append(" ".join(cur[:cut]))
+                    cur = cur[cut:]
+                else:
+                    chunks.append(" ".join(cur))
+                    cur = []
+                cur = cur + [w]
             else:
                 # bound pairs stay together even if slightly over budget
                 # (hard cap +4: a chained run of ezafe heads must not grow
@@ -301,14 +370,19 @@ class OnnxTts:
 
     # Persian function words that must not dangle at a chunk end: a
     # preposition/conjunction without its object makes the model pause after
-    # it, which the listener hears as a strange mid-phrase stop.
+    # it, which the listener hears as a strange mid-phrase stop. "beture"/
+    # "besurate" ("به‌طور/به‌صورت X") always need the word they qualify.
+    # "rA" is NOT here: it never dangles — it clings to the noun before it
+    # and is handled as a left-binding clitic.
     _FUNCTION_WORDS = {
-        "dar", "be", "az", "tA", "va", "ke", "rA", "bA", "bedune",
+        "dar", "be", "?az", "tA", "va", "ke", "bA", "bedune",
         "age", "vali", "yA", "barAye", "vase", "dAr", "mi",
+        "beture", "besurate",
     }
-    # Conjunctions bind to their LEFT operand ("A va B"): a chunk must not
-    # start with one, or the coordinated pair is split by the chunk pause.
-    _CONJUNCTIONS = {"va", "yA", "vali", "amA", "hattA", "ke"}
+    # Left-binding words: a chunk must not START with one — "A va B" and
+    # "ketAb rA" belong together, so the previous chunk's last word moves
+    # down to keep the pair intact.
+    _CONJUNCTIONS = {"va", "yA", "vali", "amA", "hattA", "ke", "rA"}
     # Persian light verbs complete the previous word's compound verb
     # ("Sekannde miSavad"); breaking right before one splits the verb.
     _LIGHT_VERBS = {
@@ -343,7 +417,8 @@ class OnnxTts:
         while i < len(chunks):
             prev, nxt = chunks[i - 1].split(), chunks[i].split()
             left_bound = len(prev) >= 2 and (
-                prev[-2].endswith("1") or prev[-1] in self._LIGHT_VERBS)
+                prev[-2].endswith("1") or prev[-1] in self._LIGHT_VERBS
+                or prev[-1] == "rA")
             bad = False
             if len(prev) > min_words:
                 if prev[-1].endswith("1"):
@@ -441,6 +516,22 @@ class OnnxTts:
                 merged.append((i, j))
         return merged
 
+    def _solid_fraction(self, speech, floor=0.05, win=0.04) -> float:
+        """Fraction of the chunk's duration carrying real speech energy
+        (windowed rms >= an absolute floor). A degraded generation produces
+        one loud burst and then near-silence: chunk-level rms and duration
+        checks both pass, but only 10-40% of the audio is speech — the
+        words are simply not there (confirmed by ASR)."""
+        if len(speech) < 3:
+            return 1.0
+        w = max(1, int(win * self.sample_rate))
+        n = len(speech) // w
+        if n == 0:
+            return 1.0
+        solid = sum(1 for i in range(n)
+                    if float(np.sqrt((speech[i * w:(i + 1) * w] ** 2).mean())) >= floor)
+        return solid / n
+
     def _generate_with_retry(self, voice_cache, voice_off, chunk, attempts=3):
         """Generate one chunk, retrying when quality is bad. Failure modes,
         all stochastic per the model card; a fresh attempt usually lands
@@ -449,16 +540,18 @@ class OnnxTts:
             caught by an ABSOLUTE rms floor, because every relative check
             is blind on a silent chunk (its own rms is ~0, so all of it
             looks "loud" and none of it looks "quiet");
-        (2) speech too short = early EOS = dropped words, or too long =
+        (2) burst-then-silence degradation — one loud syllable then
+            mumbling: caught by the solid-speech fraction;
+        (3) speech too short = early EOS = dropped words, or too long =
             runaway (the manifest's tps_est=3 is ~2x conservative vs the
             real 4-7 tokens/s, so the window is wide);
-        (3) a long mid-chunk dead-air stretch — the model sometimes goes
+        (4) a long mid-chunk dead-air stretch — the model sometimes goes
             quiet for ~1 s at a random word, heard as a weird mid-phrase
             stop (measured windowed, so noise blips inside the silence
             cannot hide it).
         Preference order when no attempt is fully clean: loud beats silent,
-        in-window beats out, less dead air, then longer (dropped words
-        read short). Returns decoded audio trimmed to actual speech."""
+        solid beats mumbled, in-window beats out, less dead air, then
+        longer (dropped words read short). Returns trimmed speech."""
         tokens = len(self.sp.encode(chunk, out_type=int))
         expected_speech = tokens / self.tps_est  # ~seconds (conservative)
         best, best_key = None, None
@@ -470,13 +563,14 @@ class OnnxTts:
             dur = (e0 - s0) / self.sample_rate
             rms = float(np.sqrt((speech ** 2).mean()))
             loud_ok = rms >= 0.02
+            solid_ok = self._solid_fraction(speech) >= 0.55
             regions = self._dead_air_regions(speech)
             dead = max((j - i) for i, j in regions) / self.sample_rate if regions else 0.0
             dur_ok = 0.35 * expected_speech <= dur <= 1.6 * expected_speech
-            key = (loud_ok, dur_ok, 0.0 if dead <= 0.35 else -dead, dur)
+            key = (loud_ok, solid_ok, dur_ok, 0.0 if dead <= 0.35 else -dead, dur)
             if best_key is None or key > best_key:
                 best, best_key = speech, key
-            if loud_ok and dur_ok and dead <= 0.35:
+            if loud_ok and solid_ok and dur_ok and dead <= 0.35:
                 break
         return best
 
