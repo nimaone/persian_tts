@@ -122,7 +122,11 @@ class OnnxG2P:
     def phonemise(self, text: str, keep_ezafe: bool = False) -> str:
         text = _LATIN_WORD.sub(lambda m: _transliterate_word(m.group(0)), text)
         text = normalize_for_model(text)
-        text = text.replace("؟", "").replace("?", "")
+        # normalize keeps ":" — and a trailing colon makes GE2P repeat the
+        # final word ("باقی‌ماندهٔ صادقانه:" -> "…sAdeqAne sAdeqAne",
+        # "نکته:" -> "nokte nokte"); the punctuation's prosodic job is done
+        # by the phrase splitter, so it is worthless to the G2P anyway
+        text = text.replace("؟", "").replace("?", "").replace(":", "")
         ids = encode(text)
         if not ids:
             return ""
