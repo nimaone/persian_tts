@@ -399,16 +399,25 @@ class OnnxTts:
     # reads far better than "…?az SabakehAye | tasAdofi …").
     _PREPS = {"?az", "bA", "dar", "be", "barAye", "tA", "ruye", "bedune", "vase"}
 
-    def _pack_words(self, words, max_tokens=18) -> list[str]:
+    def _pack_words(self, words, max_tokens=18, slack=2) -> list[str]:
         """Greedy word-boundary packing (the loop body of chunk_phonemes):
-        fill a chunk to max_tokens, keep bound pairs (ezafe "1" / light verb
-        / "rA") together up to max_tokens+2, and on a forced break look back
-        for the best joint. Chunks keep the ezafe marker attached."""
+        fill a chunk to max_tokens + slack, keep bound pairs (ezafe "1" /
+        light verb / "rA") together up to max_tokens+2, and on a forced break
+        look back for the best joint. Chunks keep the ezafe marker attached.
+
+        `slack` is the headroom the fill may use before a break is forced. It
+        defaults to the +2 that _enforce_budget and the bound-pair rule below
+        already treat as safe (21+ tokens stop terminating), so a clause that
+        fits the hard cap is read in one breath instead of being split
+        mid-clause: a 20-token clause used to be cut right after «rA», leaving
+        a 4-token tail chunk that starts late and reads as a comma pause.
+        chunk_phonemes re-packs with slack=0 (the plain 18-token target) when
+        the wider fill would leave a runt tail."""
         chunks, cur = [], []
         for w in words:
             candidate = " ".join(cur + [w])
             n = len(self.sp.encode(candidate, out_type=int))
-            over = cur and n > max_tokens
+            over = cur and n > max_tokens + slack
             bound = (
                 (cur and cur[-1].endswith("1"))   # marked ezafe pair
                 or w in self._LIGHT_VERBS         # compound verb ("Sekannde miSavad")
@@ -460,23 +469,39 @@ class OnnxTts:
         """Word-boundary packing of a phoneme string into model-sized chunks.
 
         The model is trained on ~11-token utterances; 18 is the safe budget and
-        at 21+ generations stop terminating (model card). Never breaks after an
-        ezafe marker ("1") so bound phrases like "?eqtesAde1 ?AmrikA" stay in
-        one chunk. The "1" is stripped from the returned chunks.
+        at 21+ generations stop terminating (model card), so the fill aims at
+        max_tokens+2 — the cap _enforce_budget already enforces — and drops back
+        to the plain 18 only when the wider fill would end in a runt (a short
+        chunk is generated on its own, starts late and drags dead air in).
+        Never breaks after an ezafe marker ("1") so bound phrases like
+        "?eqtesAde1 ?AmrikA" stay in one chunk. The "1" is stripped from the
+        returned chunks.
         """
         words = [w for w in phonemes.split() if w]
-        chunks = self._pack_words(words, max_tokens)
-        chunks = self._fix_boundaries(chunks)
-        chunks = self._enforce_budget(chunks, max_tokens)
-        # a trailing 1-2 token chunk reads badly (the model wants >= a few
-        # tokens); merge it into the previous chunk even slightly over
-        # budget — but never past 19 tokens (21+ stop terminating)
-        if len(chunks) >= 2:
-            tail = len(self.sp.encode(chunks[-1], out_type=int))
-            merged = len(self.sp.encode(chunks[-2] + " " + chunks[-1], out_type=int))
-            if tail <= 2 and merged <= 19:
-                chunks[-2] = chunks[-2] + " " + chunks[-1]
-                chunks.pop()
+
+        def pack(slack: int) -> list[str]:
+            c = self._pack_words(words, max_tokens, slack=slack)
+            c = self._fix_boundaries(c)
+            c = self._enforce_budget(c, max_tokens)
+            # a trailing 1-2 token chunk reads badly (the model wants >= a few
+            # tokens); merge it into the previous chunk even slightly over
+            # budget — but never past 19 tokens (21+ stop terminating)
+            if len(c) >= 2:
+                tail = len(self.sp.encode(c[-1], out_type=int))
+                merged = len(self.sp.encode(c[-2] + " " + c[-1], out_type=int))
+                if tail <= 2 and merged <= 19:
+                    c[-2] = c[-2] + " " + c[-1]
+                    c.pop()
+            return c
+
+        chunks = pack(slack=2)
+        if len(chunks) >= 2 and (
+                len(_letter_words(chunks[-1])) < 3
+                or len(self.sp.encode(chunks[-1], out_type=int)) < 6):
+            # the wider fill left a runt tail — re-pack the whole phrase with
+            # the plain 18-token target (pre-slack behaviour; measured cost of
+            # NOT doing this: a 2-token "?ast" chunk + 1.3 s of dead air)
+            chunks = pack(slack=0)
         return [c.replace("1", "") for c in chunks]
 
     def _enforce_budget(self, chunks, max_tokens):
