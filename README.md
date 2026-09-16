@@ -110,8 +110,9 @@ persian_tts/
 
 وزن‌های مدل در گیت نیستند (~۹۲۰MB) — این سه مرحله:
 
+**۱) محیط مجازی و وابستگی‌ها**
+
 ```bash
-# ۱) محیط مجازی و وابستگی‌ها
 python -m venv env
 ./env/Scripts/python.exe -m pip install -r requirements.txt
 ```
@@ -123,8 +124,9 @@ python -m venv env
   `soundfile`، `sentencepiece` (+ `fastapi`/`uvicorn` برای سرور، `onnx`/`onnxscript`
   و `pedalboard` فقط برای ساخت مجدد پکیج و کنترل سرعت)
 
+**۲) دانلود مدل‌ها از HuggingFace** (در دسترس است، بدون پراکسی)
+
 ```bash
-# ۲) دانلود مدل‌ها از HuggingFace (در دسترس است، بدون پراکسی)
 mkdir -p model/v2 model/g2p
 B=https://huggingface.co/mehdi-hf/pocket-tts-farsi-v2/resolve/main
 for f in model.yaml normalize_fa.py tokenizer_ph.model model.safetensors; do
@@ -132,8 +134,11 @@ for f in model.yaml normalize_fa.py tokenizer_ph.model model.safetensors; do
 G=https://huggingface.co/mehdi-hf/Homo-GE2PE-Persian-HF/resolve/main
 for f in config.json generation_config.json tokenizer_config.json added_tokens.json model.safetensors; do
   curl -L -o "model/g2p/$f" "$G/$f"; done
+```
 
-# ۳) ساخت پکیج ONNX یکپارچه (یکبار نیاز به torch دارد؛ بعد از آن torch دیگر لازم نیست)
+**۳) ساخت پکیج ONNX یکپارچه** (یکبار نیاز به torch دارد؛ بعد از آن torch دیگر لازم نیست)
+
+```bash
 ./env/Scripts/python.exe scripts/export_unified.py
 ```
 
@@ -145,8 +150,9 @@ for f in config.json generation_config.json tokenizer_config.json added_tokens.j
 
 ```bash
 ./env/Scripts/python.exe scripts/server.py
-# سپس در مرورگر: http://127.0.0.1:8000
 ```
+
+سپس در مرورگر: http://127.0.0.1:8000
 
 - رابط فارسی RTL با تم تیره مدرن (`web/index.html`) — بدون نیاز به اینترنت
 - انتخاب صدای مرجع + **بارگذاری صدای خودتان** (WAV/MP3/OGG/FLAC؛ خودکار به ۵ ثانیه
@@ -188,11 +194,10 @@ for f in config.json generation_config.json tokenizer_config.json added_tokens.j
 
 ### مسیر torch
 
-```bash
-# جمله ساده با صدای پیش‌فرض (زن)
-./env/Scripts/python.exe scripts/tts.py "سلام، حال شما چطور است؟"
+جمله ساده با صدای پیش‌فرض (زن)، و صدای مرد خبرنگار با خروجی دلخواه:
 
-# صدای مرد خبرنگار با خروجی دلخواه
+```bash
+./env/Scripts/python.exe scripts/tts.py "سلام، حال شما چطور است؟"
 ./env/Scripts/python.exe scripts/tts.py "متن شما" voices/male_news.wav output/my.wav
 ```
 
