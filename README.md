@@ -81,6 +81,22 @@ synthesize("سلام دنیا", "voices/female_hello.wav", "output/x.wav", tts=t
 - **فونم‌ها مستقیم**: مدل متن فارسی خام نمی‌فهمد؛ همیشه از `phonemise()` رد کنید.
 - **نسخه ONNX (کاملاً بدون torch، حتی G2P)**: `./env/Scripts/python.exe scripts/tts_onnx.py "سلام، حال شما چطور است؟" voices/female_hello.wav out.wav` — متن فارسی را مستقیم می‌گیرد (جزئیات: `docs/onnx-feasibility.md` و `docs/onnx-optimizations.md`)
 
+## اعتبارها و مجوزها
+
+وزن‌های مدل ساختهٔ این مخزن نیستند؛ این پروژه از مدل‌های منتشرشدهٔ دیگران استفاده می‌کند:
+
+| بخش | مدل / کد | سازنده | مجوز |
+|---|---|---|---|
+| TTS فارسی + کلونینگ صدا | [`mehdi-hf/pocket-tts-farsi-v2`](https://huggingface.co/mehdi-hf/pocket-tts-farsi-v2) | `mallahyari` — کد و خط لولهٔ آموزش: [`mallahyari/pocket-tts`](https://github.com/mallahyari/pocket-tts) | **CC-BY-NC-4.0** |
+| G2P فارسی→فونم | [`mehdi-hf/Homo-GE2PE-Persian-HF`](https://huggingface.co/mehdi-hf/Homo-GE2PE-Persian-HF) | بازبسته‌بندی از [`MahtaFetrat/Homo-GE2PE-Persian`](https://huggingface.co/MahtaFetrat/Homo-GE2PE-Persian) نوشتهٔ **Elnaz Rahmati** و همکاران | MIT © 2025 Elnaz Rahmati |
+| کتابخانه و معماری پایه | [`pocket-tts`](https://pypi.org/project/pocket-tts/) نسخهٔ ۳.۱.۰ | [Kyutai](https://kyutai.org) | MIT |
+
+**هشدار مجوز — استفادهٔ تجاری ممنوع:** مدل TTS با مجوز **CC-BY-NC-4.0** منتشر شده است (محدودیتی که از دادهٔ آموزش به ارث رسیده) و استفادهٔ تجاری از خروجی آن مجاز نیست. برای استفادهٔ تجاری باید از سازنده مجوز بگیرید یا سراغ مدل دیگری بروید.
+
+**دربارهٔ G2P:** آنچه در `mehdi-hf/Homo-GE2PE-Persian-HF` قرار دارد مدل جدیدی نیست؛ وزن‌ها بایت‌به‌بایت همان `MahtaFetrat/Homo-GE2PE-Persian` هستند و تغییر فقط در بسته‌بندی است (فرمت `from_pretrained` بدون وابستگی به Parsivar). همهٔ اعتبار مدل به نویسندگان اصلی می‌رسد.
+
+کد این مخزن (اسکریپت‌ها و رابط وب) نوشتهٔ همین پروژه است؛ مدل‌ها و کتابخانهٔ پایه متعلق به سازندگان بالا هستند.
+
 ## نکته فنی نصب (پچ فورک)
 
 پکیج PyPI نسخه ۳.۱.۰ سه فلگ `capitalize_first_letter` و... را نمی‌شناسد که بدون آن‌ها
