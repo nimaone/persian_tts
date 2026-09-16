@@ -228,6 +228,52 @@ def pack_phrases(plan: list[tuple[str, float]]) -> list[tuple[str, float]]:
     return groups
 
 
+def trim_hot_onset(audio: np.ndarray, sr: int, head_ms: int = 300,
+                   thresh_db: float = 4.0,
+                   min_keep_s: float = 1.5) -> tuple[np.ndarray, int]:
+    """Drop a hot opening from a reference-voice prompt. -> (audio, dropped_ms)
+
+    A prompt whose first syllable is much louder than the rest of the sample
+    makes the model replay that onset instead of the first word of a chunk.
+    With voices/female_hello.wav (first 300 ms = +9.3 dB over the sample's own
+    speech level) the 4-token tail chunk «شبکه شکننده میشود» opened with a
+    280 ms burst: peak 1.39 (past full scale), +8 dB over the chunk's own body
+    and 0.86-correlated with the prompt's first 250 ms — so the word «شبکه» is
+    masked and the peak guard ducks the whole render by ~3 dB. The other two
+    builtin references start with ~250 ms of near-silence (-48 / -36 dB) and
+    never do this. Measured remedy: drop the leading 300 ms (four seeds and
+    the full sentence come out clean; head peak 1.385 -> 0.025, head rms
+    9 -> 27 dB below the chunk body). A prompt that opens at a normal level is
+    returned untouched, so this costs nothing for voices that are already fine
+    — and it also covers uploads, which only get trimmed to 5 s and never had
+    their onset looked at. Prompts too short to lose `head_ms` keep their burst
+    (min_keep_s): a 0.9 s prompt would hurt the clone more than the leak."""
+    if len(audio) < sr:                       # too short to judge
+        return audio, 0
+    h = max(1, int(0.01 * sr))
+    nf = len(audio) // h
+    peak = float(np.abs(audio).max())
+    if nf < 8 or peak < 1e-6:
+        return audio, 0
+    frames = np.sqrt(np.array([(audio[i * h:(i + 1) * h] ** 2).mean()
+                               for i in range(nf)], dtype=np.float64))
+    speech = frames[frames > 0.02 * peak]     # frames carrying real audio
+    if not len(speech):
+        return audio, 0
+    typical = float(np.median(speech))
+    head = frames[: max(1, int(head_ms / 10))]
+    if float(np.sqrt((head ** 2).mean())) <= typical * 10 ** (thresh_db / 20):
+        return audio, 0
+    drop = int(head_ms / 1000 * sr)
+    if len(audio) - drop < min_keep_s * sr:
+        return audio, 0
+    out = audio[drop:].copy()
+    f = max(1, int(0.02 * sr))                # the new start may be mid-wave
+    if len(out) > 2 * f:
+        out[:f] *= np.linspace(0.0, 1.0, f, dtype=np.float32)
+    return out, drop * 1000 // sr
+
+
 class OnnxTts:
     def __init__(self, pkg_dir=PKG, seed=None):
         # seed=None draws OS entropy: every run differs, so the README's
@@ -328,6 +374,11 @@ class OnnxTts:
         # upload endpoint already trims; this guards the CLI/engine path)
         if len(audio) > 5 * self.sample_rate:
             audio = audio[: 5 * self.sample_rate]
+        audio, dropped = trim_hot_onset(audio, self.sample_rate)
+        if dropped:
+            print(f"voice prompt {p.name}: dropped the first {dropped} ms — a "
+                  f"hot opening syllable gets replayed as a burst over the "
+                  f"first word of every chunk")
 
         lat = self.s_enc.run(None, {"audio": audio[None, None, :]})[0]  # [1,T,ldim]
         cond = (lat[0] @ self.spk_proj.T).astype(np.float32)            # [T,dim]
