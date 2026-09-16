@@ -184,6 +184,13 @@ footer b{color:var(--muted);font-weight:600}
       <textarea id="txt" maxlength="800" placeholder="متن خود را بنویسید…">سلام، حال شما چطور است؟ امیدوارم روز خوبی داشته باشید.</textarea>
       <div class="chips" id="chips"></div>
       <div class="pace-row">
+        <span class="plabel">حالت گفتار</span>
+        <div class="pchips">
+          <button class="pchip sel" data-m="split" title="هر ویرگول و علامت، مکث خودش را می‌گیرد">با مکث ویرگول‌ها</button>
+          <button class="pchip" data-m="pack" title="جمله در نفس‌های بلندتر خوانده می‌شود؛ فقط دونقطه و خط تیره مکث دارند">یکپارچه و روان</button>
+        </div>
+      </div>
+      <div class="pace-row">
         <span class="plabel">سرعت گفتار</span>
         <div class="pchips">
           <button class="pchip" data-p="0.85">آرام</button>
@@ -300,6 +307,14 @@ document.querySelectorAll(".pchip").forEach(c =>
   c.onclick = () => setPace(c.dataset.p));
 setPace(1);
 
+/* ---------- speech mode ---------- */
+let mode = "split";
+document.querySelectorAll(".pchip[data-m]").forEach(c =>
+  c.onclick = () => {
+    mode = c.dataset.m;
+    document.querySelectorAll(".pchip[data-m]").forEach(x => x.classList.toggle("sel", x === c));
+  });
+
 /* ---------- counter ---------- */
 function count() { $("cnt").textContent = fa($("txt").value.length) + " / ۸۰۰"; }
 $("txt").addEventListener("input", count); count();
@@ -340,7 +355,7 @@ $("go").onclick = async () => {
   try {
     const r = await fetch("/api/tts", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, voice: selVoice, pace: +paceEl.value }),
+      body: JSON.stringify({ text, voice: selVoice, pace: +paceEl.value, mode }),
     }).then(r => r.json());
     if (r.detail) return toast(typeof r.detail === "string" ? r.detail : "خطا در تولید");
     await present(r, text);

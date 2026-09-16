@@ -50,6 +50,12 @@ def split_phrases(sentence: str) -> list[str]:
 # purpose is the pause that follows it.
 _STRONG_LEADIN = (":", "؛", "—", "–")
 
+# pause lengths shared by the plan/pack layers (seconds): a strong lead-in
+# (colon/semicolon/dash) gets a real stop, a comma a short breath; the
+# 0.45 s sentence pause is inserted by the caller, outside these layers
+_STRONG_GAP = 0.26
+_PHRASE_GAP = 0.16
+
 
 def _letter_words(tp: str) -> list[str]:
     """Words with at least one letter/digit — a lone "—" or "..." is not a
@@ -200,9 +206,26 @@ def plan_phrases(sentence: str, g2p, tokenizer=None) -> list[tuple[str, float]]:
             if not ph:
                 continue
             strong = prev_tp is not None and prev_tp.rstrip().endswith(_STRONG_LEADIN)
-            out.append((ph, 0.26 if strong else 0.16))
+            out.append((ph, _STRONG_GAP if strong else _PHRASE_GAP))
             prev_tp = q
     return out
+
+
+def pack_phrases(plan: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    """PACK mode (the UI's «یکپارچه» option): merge adjacent phrases into
+    one breathing unit unless a strong lead-in (gap 0.26 — colon/semicolon/
+    dash) demands its pause. The comma pauses give way to the chunker's
+    shorter joints, so the sentence flows in fewer, longer breaths — the
+    model ends every chunk with its own sentence-final fall, so fewer
+    chunks mean fewer artificial sentence-ends. Split mode (the plan as-is)
+    keeps every punctuation pause."""
+    groups: list[tuple[str, float]] = []
+    for ph, gap in plan:
+        if groups and gap != _STRONG_GAP:
+            groups[-1] = (groups[-1][0] + " " + ph, groups[-1][1])
+        else:
+            groups.append((ph, gap))
+    return groups
 
 
 class OnnxTts:
@@ -338,10 +361,13 @@ class OnnxTts:
             off += self.steps_per_latent
         return np.concatenate(out, axis=2)[0, 0]
 
-    def synthesize_text(self, text, voice_wav, seed=None, pace=1.0):
+    def synthesize_text(self, text, voice_wav, seed=None, pace=1.0, mode="split"):
         """Persian text OR phonemes -> audio. Persian is auto-detected;
         Persian text is split into sentences and punctuation-delimited phrases
-        BEFORE phonemisation so pauses land where the writer put them."""
+        BEFORE phonemisation so pauses land where the writer put them.
+        mode="pack" merges comma-delimited phrases into longer breathing
+        units (pack_phrases) — punctuation pauses survive only at strong
+        lead-ins (colon/semicolon/dash)."""
         if any("؀" <= ch <= "ۿ" for ch in text):
             from g2p_onnx import OnnxG2P
 
@@ -353,6 +379,8 @@ class OnnxTts:
             sentences = []
             for sent in split_sentences(text):
                 plan = plan_phrases(sent, self._g2p, self.sp)
+                if mode == "pack":
+                    plan = pack_phrases(plan)
                 if plan:
                     sentences.append(plan)
             print("phonemes:", " ".join(" ".join(p for p, _ in s) for s in sentences))
@@ -581,7 +609,7 @@ class OnnxTts:
                 if pi == 0 and ci == 0:
                     gap = 0.0
                 elif ci == 0:
-                    gap = pgap if pgap is not None else 0.16
+                    gap = pgap if pgap is not None else _PHRASE_GAP
                 else:
                     gap = 0.12
                 jobs.append((chunk, gap))
@@ -860,13 +888,17 @@ def main():
         i = args.index("--seed")
         seed = int(args[i + 1])
         args = args[:i] + args[i + 2:]
+    mode = "split"
+    if "--pack" in args:  # merge comma phrases into longer breaths
+        args = [a for a in args if a != "--pack"]
+        mode = "pack"
     text = args[0] if args else "سلام، حال شما چطور است؟"
     voice = args[1] if len(args) > 1 else str(BASE / "voices" / "female_hello.wav")
     out = args[2] if len(args) > 2 else str(BASE / "output" / "tts_onnx.wav")
 
     eng = OnnxTts(seed=seed)
     t0 = time.perf_counter()
-    audio = eng.synthesize_text(text, voice)
+    audio = eng.synthesize_text(text, voice, mode=mode)
     dt = time.perf_counter() - t0
 
     import soundfile as sf

@@ -51,7 +51,7 @@ _store_lock = threading.Lock()
 
 # punctuation-aware phrase splitting lives with the engine (single source of
 # truth for where pauses may fall)
-from tts_onnx import plan_phrases  # noqa: E402
+from tts_onnx import plan_phrases, pack_phrases  # noqa: E402
 
 
 def get_engine():
@@ -99,6 +99,7 @@ class TTSRequest(BaseModel):
     text: str
     voice: str
     pace: float = 1.0
+    mode: str = "split"   # split: pause at every punctuation | pack: long breaths
 
 
 @app.get("/")
@@ -121,6 +122,8 @@ def tts(req: TTSRequest):
 
     engine = get_engine()
     pace = float(min(max(req.pace, 0.6), 1.5))
+    if req.mode not in ("split", "pack"):
+        raise HTTPException(400, "حالت گفتار باید split یا pack باشد")
     phonemes_all, chunks = [], []
 
     with _engine_lock:
@@ -132,6 +135,8 @@ def tts(req: TTSRequest):
                 plan = plan_phrases(sent, engine._g2p, engine.sp)
             except ValueError as e:
                 raise HTTPException(400, "متن فارسی معتبری پیدا نشد") from e
+            if req.mode == "pack":
+                plan = pack_phrases(plan)
             if not plan:
                 continue
             # model card: retry a runaway once (stochastic; 2nd attempt usually ends)
@@ -167,6 +172,7 @@ def tts(req: TTSRequest):
         "phonemes": " ".join(phonemes_all),
         "duration": round(duration, 2),
         "pace": pace,
+        "mode": req.mode,
         "sentences": len(phonemes_all),
         "elapsed": None,
     }
