@@ -465,7 +465,7 @@ def export_flow_mimi_pkg_verify():
     s_uni = ort.InferenceSession(str(OUT / "flow_lm_step.onnx"), providers=["CPUExecutionProvider"])
 
     # A) voice-conditioning step vs torch get_state_for_audio_prompt
-    VOICE = str(BASE / "voices" / "female_hello.wav")
+    VOICE = str(BASE / "voices" / "male_hello.wav")
     vs_torch = tts.get_state_for_audio_prompt(VOICE)
 
     import soundfile as sf

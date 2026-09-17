@@ -37,8 +37,8 @@ MAX_TEXT = 800          # keep demo requests bounded
 MAX_VOICES = 64
 
 BUILTIN_VOICE_META = {
-    "female_hello.wav": ("بانو · صمیمی", "صدای زن، لحن آرام و دوستانه"),
-    "female_short.wav": ("بانو · روایت", "صدای زن، روایت‌گر"),
+    "male_hello.wav": ("آقا · صمیمی", "صدای مرد، لحن آرام و دوستانه"),
+    "female_narration.wav": ("بانو · روایت", "صدای زن، روایت‌گر"),
     "male_news.wav": ("آقا · خبری", "صدای مرد، لحن خبرگزاری"),
 }
 

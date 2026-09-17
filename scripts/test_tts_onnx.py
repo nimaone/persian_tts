@@ -12,7 +12,7 @@ sys.path.insert(0, str(BASE / "scripts" / "onnx_dev"))
 import soundfile as sf
 
 PHONEMES = "salAm hAle SomA Cetor ?ast"
-VOICE = str(BASE / "voices" / "female_hello.wav")
+VOICE = str(BASE / "voices" / "male_hello.wav")
 
 from pocket_tts import TTSModel
 from pocket_tts.modules.stateful_module import init_states, increment_steps

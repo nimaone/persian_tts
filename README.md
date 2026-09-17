@@ -206,8 +206,8 @@ for f in config.json generation_config.json tokenizer_config.json added_tokens.j
 
 | فایل | نام در دمو | توضیح |
 |---|---|---|
-| `voices/female_hello.wav` | بانو · صمیمی | صدای زن، لحن آرام و دوستانه |
-| `voices/female_short.wav` | بانو · روایت | صدای زن، روایت‌گر |
+| `voices/male_hello.wav` | آقا · صمیمی | صدای مرد، لحن آرام و دوستانه |
+| `voices/female_narration.wav` | بانو · روایت | صدای زن، روایت‌گر |
 | `voices/male_news.wav` | آقا · خبری | صدای مرد، لحن خبرگزاری |
 
 محدودیت دمو: حداکثر ۸۰۰ نویسه متن در هر درخواست.
@@ -223,7 +223,7 @@ for f in config.json generation_config.json tokenizer_config.json added_tokens.j
 | آرگومان | پیشفرض | توضیح |
 |---|---|---|
 | متن | `سلام، حال شما چطور است؟` | متن فارسی **یا** رشتهٔ فونم (خودکار تشخیص داده می‌شود) |
-| صدای مرجع | `voices/female_hello.wav` | فایل WAV مرجع (≤ ۵ ثانیه) |
+| صدای مرجع | `voices/male_hello.wav` | فایل WAV مرجع (≤ ۵ ثانیه) |
 | خروجی | `output/tts_onnx.wav` | مسیر فایل خروجی |
 | `--seed N` | تصادفی | برای بازتولید دقیق یک خروجی |
 | `--pack` | خالی | حالت «یکپارچه و روان» (ادغام عبارات ویرگولی) |
@@ -251,13 +251,13 @@ import sys; sys.path.insert(0, "scripts")
 # مسیر ONNX (بدون torch)
 from tts_onnx import OnnxTts
 eng = OnnxTts()                       # seed= برای بازتولید
-audio = eng.synthesize_text("سلام دنیا", "voices/female_hello.wav", mode="pack")
+audio = eng.synthesize_text("سلام دنیا", "voices/male_hello.wav", mode="pack")
 # یا مستقیماً روی فونم: eng.synthesize("salAm donyA", voice, pace=1.0)
 
 # مسیر torch
 from persian_tts import load_g2p, load_tts, synthesize
 g2p = load_g2p(); tts = load_tts()
-synthesize("سلام دنیا", "voices/female_hello.wav", "output/x.wav", tts=tts, g2p=g2p)
+synthesize("سلام دنیا", "voices/male_hello.wav", "output/x.wav", tts=tts, g2p=g2p)
 
 # G2P بهتنهایی
 from g2p_onnx import OnnxG2P
@@ -282,7 +282,7 @@ print(OnnxG2P().phonemise("اقتصاد آمریکا"))   # -> "?eqtesAde ?Amrik
 ```bash
 curl -X POST localhost:8000/api/tts \
   -H 'Content-Type: application/json' \
-  -d '{"text":"سلام، حال شما چطور است؟","voice":"female_hello.wav","mode":"pack"}'
+  -d '{"text":"سلام، حال شما چطور است؟","voice":"male_hello.wav","mode":"pack"}'
 # -> {"id":"a1b2c3d4e5f6","phonemes":"salAm hAle SomA Cetor ?ast","duration":2.41,...}
 # صدا:  curl localhost:8000/api/audio/a1b2c3d4e5f6 --output out.wav
 ```

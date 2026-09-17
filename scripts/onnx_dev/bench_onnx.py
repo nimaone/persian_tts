@@ -28,7 +28,7 @@ from pocket_tts.modules.stateful_module import init_states, increment_steps
 
 ORT_DIR = BASE / "onnx_export"
 PHONEMES = "salAm hAle SomA Cetor ?ast"          # 6 tokens == exported prompt graph
-VOICE = str(BASE / "voices" / "female_hello.wav")
+VOICE = str(BASE / "voices" / "male_hello.wav")
 TEMP = 0.3
 EOS_THRESHOLD = -4.0
 

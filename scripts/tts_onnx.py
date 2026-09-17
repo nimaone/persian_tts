@@ -8,7 +8,7 @@
 # Package: model/onnx/ (see manifest.json)
 #
 # CLI:
-#   python scripts/tts_onnx.py "salAm hAle SomA Cetor ?ast" voices/female_hello.wav out.wav
+#   python scripts/tts_onnx.py "salAm hAle SomA Cetor ?ast" voices/male_hello.wav out.wav
 import json
 import os
 import re
@@ -235,7 +235,7 @@ def trim_hot_onset(audio: np.ndarray, sr: int, head_ms: int = 300,
 
     A prompt whose first syllable is much louder than the rest of the sample
     makes the model replay that onset instead of the first word of a chunk.
-    With voices/female_hello.wav (first 300 ms = +9.3 dB over the sample's own
+    With voices/male_hello.wav (first 300 ms = +9.3 dB over the sample's own
     speech level) the 4-token tail chunk «شبکه شکننده میشود» opened with a
     280 ms burst: peak 1.39 (past full scale), +8 dB over the chunk's own body
     and 0.86-correlated with the prompt's first 250 ms — so the word «شبکه» is
@@ -866,7 +866,7 @@ class OnnxTts:
     def _stitch(self, segments):
         """Join chunk audios into one continuous-sounding piece: loudness
         matched to the MEDIAN chunk level (chunks are generated fresh and
-        their levels differ wildly — a female_short segment measured at 3x
+        their levels differ wildly — a female_narration segment measured at 3x
         its median), plus 8 ms declick fades and fixed short pauses instead
         of the variable 1-2 s of model-generated dead air. The gain clip is
         deliberately wide (0.4-2.5): the old ±35% bound left such an outlier
@@ -969,7 +969,7 @@ def main():
         args = [a for a in args if a != "--pack"]
         mode = "pack"
     text = args[0] if args else "سلام، حال شما چطور است؟"
-    voice = args[1] if len(args) > 1 else str(BASE / "voices" / "female_hello.wav")
+    voice = args[1] if len(args) > 1 else str(BASE / "voices" / "male_hello.wav")
     out = args[2] if len(args) > 2 else str(BASE / "output" / "tts_onnx.wav")
 
     eng = OnnxTts(seed=seed)

@@ -18,7 +18,7 @@ from pocket_tts.modules.stateful_module import init_states, increment_steps
 
 ORT_DIR = BASE / "onnx_export"
 PHONEMES = "salAm hAle SomA Cetor ?ast"
-VOICE = str(BASE / "voices" / "female_hello.wav")
+VOICE = str(BASE / "voices" / "male_hello.wav")
 TEMP, EOS_THRESHOLD = 0.3, -4.0
 
 

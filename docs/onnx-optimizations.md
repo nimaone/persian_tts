@@ -133,7 +133,7 @@ model/onnx/                        (۴۴۹ MB)
 
 ### موتور: `scripts/tts_onnx.py`
 ```bash
-./env/Scripts/python.exe scripts/tts_onnx.py "سلام، حال شما چطور است؟" voices/female_hello.wav out.wav
+./env/Scripts/python.exe scripts/tts_onnx.py "سلام، حال شما چطور است؟" voices/male_hello.wav out.wav
 ```
 **کل خط لوله بدون torch** — G2P هم به ONNX منتقل شد (بخش ۵ زیر). متن فارسی
 خودکار تشخیص داده می‌شود و فونم‌سازی می‌گردد؛ رشته فونم هم مستقیم پذیرفته می‌شود.
