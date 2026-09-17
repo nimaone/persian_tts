@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" role="img" aria-labelledby="title">
+  <title id="title">لوگوی پارسی‌گو</title>
+  <defs>
+    <linearGradient id="logo-gradient" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#ff7a59"/>
+      <stop offset="1" stop-color="#ffb454"/>
+    </linearGradient>
+    <filter id="logo-shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#ff7a59" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="24" height="24" rx="6.545" fill="url(#logo-gradient)" filter="url(#logo-shadow)"/>
+  <path d="M3 12h2l2-6 3 12 3-16 3 16 2-6h3" fill="none" stroke="#231303" stroke-width="2.4" stroke-linecap="round"/>
+</svg>

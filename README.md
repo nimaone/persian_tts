@@ -1,3 +1,7 @@
+[![لوگوی پارسی‌گو](web/logo.svg)](web/logo.svg)
+
+**فارسی** | [English](README.en.md)
+
 # پارسی‌گو — تبدیل متن فارسی به گفتار (pocket-tts-farsi-v2)
 
 تبدیل متن فارسی به گفتار با **کلونینگ صدا**، کاملاً آفلاین روی **CPU** — بدون GPU، بدون
@@ -108,7 +112,8 @@ persian_tts/
 │   ├── test_tts_onnx.py   صحت‌سنجی و بنچمارک موتور ONNX در برابر torch
 │   └── onnx_dev/      اسکریپت‌های توسعه ONNX (spike/bench؛ تاریخی)
 ├── web/index.html     رابط فارسی RTL دموی وب
-└── README.md
+├── README.md          مستندات فارسی
+└── README.en.md       English documentation
 ```
 
 ## راه‌اندازی از کلون تازه
