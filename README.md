@@ -13,6 +13,11 @@
 
 دموی وب: `./env/Scripts/python.exe scripts/server.py` → http://127.0.0.1:8000
 
+- 🎧 **نمونه صدا (بدون نصب):** [دموی آنلاین](https://nimaone-persian-tts-onnx.static.hf.space)
+  — سه صدای داخلی رو آنلاین گوش بدید.
+- 📦 **پکیج آمادهٔ ONNX:** [`Nimaone/pocket-tts-farsi-v2-onnx`](https://huggingface.co/Nimaone/pocket-tts-farsi-v2-onnx)
+  — نیازی به torch و ساخت پکیج نیست؛ مستقیم دانلود و اجرا کنید.
+
 ## مقایسهٔ مسیر ONNX و PyTorch
 
 هر دو مسیر **همان مدل** را اجرا می‌کنند (وزن‌های یکسان pocket-tts-farsi-v2)؛ تفاوت در
@@ -108,6 +113,39 @@ persian_tts/
 
 ## راه‌اندازی از کلون تازه
 
+### مسیر ONNX (توصیه‌شده — بدون torch)
+
+پکیج آمادهٔ ONNX از HuggingFace دانلود می‌شود؛ نیازی به torch یا ساخت پکیج نیست.
+
+**۱) محیط مجازی و وابستگی‌های سبک (~۲۰۰MB)**
+
+```bash
+python -m venv env
+./env/Scripts/python.exe -m pip install onnxruntime numpy scipy soundfile sentencepiece
+./env/Scripts/python.exe -m pip install fastapi uvicorn
+```
+
+**۲) کلون پروژه و دانلود پکیج ONNX از HuggingFace**
+
+```bash
+git clone https://github.com/nimaone/persian_tts
+cd persian_tts
+./env/Scripts/python.exe -m pip install -U "huggingface_hub[cli]"
+hf download Nimaone/pocket-tts-farsi-v2-onnx --local-dir model/onnx
+```
+
+**۳) اجرا**
+
+```bash
+./env/Scripts/python.exe scripts/tts_onnx.py "سلام، حال شما چطور است؟"
+./env/Scripts/python.exe scripts/server.py   # دموی وب: http://127.0.0.1:8000
+```
+
+> پکیج `Nimaone/pocket-tts-farsi-v2-onnx` شامل تمام گراف‌های ONNX، ثابت‌ها و manifest
+> است — همان محتویاتی که `scripts/export_unified.py` می‌سازد. نیازی به اجرای torch ندارید.
+
+### مسیر torch (فقط برای توسعه و صحت‌سنجی)
+
 وزن‌های مدل در گیت نیستند (~۹۲۰MB) — این سه مرحله:
 
 **۱) محیط مجازی و وابستگی‌ها**
@@ -144,7 +182,7 @@ for f in config.json generation_config.json tokenizer_config.json added_tokens.j
 
 > **نکته:** مرحلهٔ ۳ به torch نیاز دارد چون گراف‌ها را از مدل اصلی export می‌کند، اما
 > *خروجی* آن (`model/onnx/`) کاملاً بدون torch اجرا می‌شود. وقتی پکیج ساخته شد، می‌توانید
-> مسیر ONNX را با همان وابستگی‌های ~۶۰MB اجرا کنید.
+> مسیر ONNX را با همان وابستگی‌های ~۲۰۰MB اجرا کنید.
 
 ## دموی وب (UI)
 
