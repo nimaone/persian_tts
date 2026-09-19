@@ -2,6 +2,10 @@
 
 <img src="web/logo.png" width="128" alt="لوگوی پارسی‌گو">
 
+<h1 align="center">پارسی‌گو (تبدیل متن فارسی به گفتار)</h1>
+
+<p align="center"><sub>pocket-tts-farsi-v2</sub></p>
+
 **فارسی** | [English](README.en.md)
 
 <a href="docs/demo.mp4"><img src="docs/demo-poster.jpg" width="640" alt="دموی ویدیویی پارسی‌گو — انتخاب صدا، تایپ متن و تولید گفتار در وب‌اپ"></a>
@@ -14,8 +18,6 @@ https://github.com/user-attachments/assets/dfc735c3-65fb-473a-a437-747efd8ede20
 [docs/demo-poster.jpg](docs/demo-poster.jpg))
 
 </div>
-
-# پارسی‌گو — تبدیل متن فارسی به گفتار (pocket-tts-farsi-v2)
 
 تبدیل متن فارسی به گفتار با **کلونینگ صدا**، کاملاً آفلاین روی **CPU** — بدون GPU، بدون
 ارتباط با اینترنت در زمان اجرا. متن فارسی را مستقیم می‌گیرد، فونم‌سازی و سنتز را خودش

@@ -2,6 +2,10 @@
 
 <img src="web/logo.png" width="128" alt="ParSiGo logo">
 
+<h1 align="center">ParSiGo (Persian Text-to-Speech)</h1>
+
+<p align="center"><sub>pocket-tts-farsi-v2</sub></p>
+
 **Persian** | [English](README.en.md)
 
 <a href="docs/demo.mp4"><img src="docs/demo-poster.jpg" width="640" alt="ParSiGo video demo — picking a reference voice, typing text and synthesising speech in the web app"></a>
@@ -14,8 +18,6 @@ synthesising a sample sentence, uploading a 5-second voice clip and cloning it o
 [docs/demo-poster.jpg](docs/demo-poster.jpg))
 
 </div>
-
-# ParSiGo — Persian Text-to-Speech (pocket-tts-farsi-v2)
 
 Persian text-to-speech with **voice cloning**, fully offline on **CPU** — no GPU, no internet connection at runtime. It takes Persian text directly, performs phonemisation and synthesis itself, and outputs WAV at a 24 kHz sample rate.
 
