@@ -61,6 +61,24 @@ SENTENCE_GAP = 0.45
 # the _compress_pauses keep=0.12, which shortens leftover dead air)
 _CHUNK_GAP = 0.12
 
+# ---- chunking token budget: single source for the measured model limits ----
+# the model trains on ~11-token utterances; CHUNK_TOKENS is the safe budget
+# and budget+CHUNK_HEADROOM still terminates (21+ tokens do not) — the
+# bound-pair rule and _enforce_budget accept up to budget+headroom even when
+# the fill slack is 0. TAIL_MERGE_CAP is deliberately NOT the hard cap: the
+# runt-tail merge may only reach 19 (its own, smaller measured bound).
+CHUNK_TOKENS = 18
+CHUNK_HEADROOM = 2
+TAIL_MERGE_CAP = 19
+# minimum viable chunk — below this the model reads badly ("har taklif rA"
+# came out as garbage on whole voices)
+MIN_CHUNK_WORDS = 3
+MIN_CHUNK_TOKENS = 6
+RUNT_TAIL_TOKENS = 2
+# best-joint lookback depth on a forced break (words scanned backwards)
+LOOKBACK_LIGHTVERB = 5   # light verb / "rA" joints
+LOOKBACK_PREP = 3        # stranded-preposition joints
+
 
 def _letter_words(tp: str) -> list[str]:
     """Words with at least one letter/digit — a lone "—" or "..." is not a
@@ -202,7 +220,7 @@ def plan_phrases(sentence: str, g2p, tokenizer=None) -> list[tuple[str, float]]:
     for tp in merged:
         ph_tp = g2p.phonemise(tp, keep_ezafe=True)
         if (tokenizer is not None and ph_tp
-                and len(tokenizer.encode(ph_tp, out_type=int)) <= 20):
+                and len(tokenizer.encode(ph_tp, out_type=int)) <= CHUNK_TOKENS + CHUNK_HEADROOM):
             parts = [tp]          # fits one chunk even with bound-pair slack
         else:
             parts = split_long_phrase(tp)
@@ -458,7 +476,7 @@ class OnnxTts:
     # reads far better than "…?az SabakehAye | tasAdofi …").
     _PREPS = {"?az", "bA", "dar", "be", "barAye", "tA", "ruye", "bedune", "vase"}
 
-    def _pack_words(self, words, max_tokens=18, slack=2) -> list[str]:
+    def _pack_words(self, words, max_tokens=CHUNK_TOKENS, slack=CHUNK_HEADROOM) -> list[str]:
         """Greedy word-boundary packing (the loop body of chunk_phonemes):
         fill a chunk to max_tokens + slack, keep bound pairs (ezafe "1" /
         light verb / "rA") together up to max_tokens+2, and on a forced break
@@ -482,7 +500,7 @@ class OnnxTts:
                 or w in self._LIGHT_VERBS         # compound verb ("Sekannde miSavad")
                 or w == "rA"                      # object marker clings to its noun
             )
-            if over and not (bound and n <= max_tokens + 2):
+            if over and not (bound and n <= max_tokens + CHUNK_HEADROOM):
                 # a break is forced — pick the best joint near the overflow:
                 # 1. right after a light verb (it completes its host, and
                 #    what follows starts a fresh unit: "…jadidi miSavad |
@@ -495,17 +513,17 @@ class OnnxTts:
                 #    one word between prep and break: "…biStar | ?az
                 #    SabakehAye …" not "…?az SabakehAye | tasAdofi …")
                 cut = len(cur)
-                for k in range(len(cur) - 1, max(len(cur) - 5, -1), -1):
+                for k in range(len(cur) - 1, max(len(cur) - LOOKBACK_LIGHTVERB, -1), -1):
                     if cur[k] in self._LIGHT_VERBS or cur[k] == "rA":
                         cut = k + 1
                         break
                 if cut == len(cur):
-                    for k in range(len(cur) - 1, max(len(cur) - 3, -1), -1):
+                    for k in range(len(cur) - 1, max(len(cur) - LOOKBACK_PREP, -1), -1):
                         if cur[k] in self._PREPS and len(cur) - k <= 2:
                             cut = k
                             break
-                if (cut >= 3
-                        and len(self.sp.encode(" ".join(cur[:cut]), out_type=int)) >= 6):
+                if (cut >= MIN_CHUNK_WORDS
+                        and len(self.sp.encode(" ".join(cur[:cut]), out_type=int)) >= MIN_CHUNK_TOKENS):
                     # guard: a cut must not create a tiny chunk (<6 tokens)
                     # — the model is unreliable on those ("har taklif rA"
                     # came out as garbage on whole voices)
@@ -524,7 +542,7 @@ class OnnxTts:
             chunks.append(" ".join(cur))
         return chunks
 
-    def chunk_phonemes(self, phonemes: str, max_tokens: int = 18) -> list[str]:
+    def chunk_phonemes(self, phonemes: str, max_tokens: int = CHUNK_TOKENS) -> list[str]:
         """Word-boundary packing of a phoneme string into model-sized chunks.
 
         The model is trained on ~11-token utterances; 18 is the safe budget and
@@ -548,15 +566,15 @@ class OnnxTts:
             if len(c) >= 2:
                 tail = len(self.sp.encode(c[-1], out_type=int))
                 merged = len(self.sp.encode(c[-2] + " " + c[-1], out_type=int))
-                if tail <= 2 and merged <= 19:
+                if tail <= RUNT_TAIL_TOKENS and merged <= TAIL_MERGE_CAP:
                     c[-2] = c[-2] + " " + c[-1]
                     c.pop()
             return c
 
-        chunks = pack(slack=2)
+        chunks = pack(slack=CHUNK_HEADROOM)
         if len(chunks) >= 2 and (
-                len(_letter_words(chunks[-1])) < 3
-                or len(self.sp.encode(chunks[-1], out_type=int)) < 6):
+                len(_letter_words(chunks[-1])) < MIN_CHUNK_WORDS
+                or len(self.sp.encode(chunks[-1], out_type=int)) < MIN_CHUNK_TOKENS):
             # the wider fill left a runt tail — re-pack the whole phrase with
             # the plain 18-token target (pre-slack behaviour; measured cost of
             # NOT doing this: a 2-token "?ast" chunk + 1.3 s of dead air)
@@ -570,12 +588,12 @@ class OnnxTts:
         19-token chunk was observed in the wild; the old +4 slack allowed
         22 in theory while 21+ already stop terminating)."""
         for _ in range(3):
-            if all(len(self.sp.encode(c, out_type=int)) <= max_tokens + 2
+            if all(len(self.sp.encode(c, out_type=int)) <= max_tokens + CHUNK_HEADROOM
                    for c in chunks):
                 return chunks
             repacked = []
             for c in chunks:
-                if len(self.sp.encode(c, out_type=int)) <= max_tokens + 2:
+                if len(self.sp.encode(c, out_type=int)) <= max_tokens + CHUNK_HEADROOM:
                     repacked.append(c)
                 else:
                     repacked.extend(self._pack_words(c.split(), max_tokens))
