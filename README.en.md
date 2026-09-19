@@ -1,6 +1,10 @@
-[![ParSiGo logo](web/logo.svg)](web/logo.svg)
+<div align="center">
+
+<img src="web/logo.svg" width="128" alt="ParSiGo logo">
 
 **Persian** | [English](README.en.md)
+
+</div>
 
 # ParSiGo — Persian Text-to-Speech (pocket-tts-farsi-v2)
 

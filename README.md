@@ -1,6 +1,10 @@
-[![لوگوی پارسی‌گو](web/logo.svg)](web/logo.svg)
+<div align="center">
+
+<img src="web/logo.svg" width="128" alt="لوگوی پارسی‌گو">
 
 **فارسی** | [English](README.en.md)
+
+</div>
 
 # پارسی‌گو — تبدیل متن فارسی به گفتار (pocket-tts-farsi-v2)
 
