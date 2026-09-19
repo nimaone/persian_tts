@@ -4,6 +4,8 @@
 
 **فارسی** | [English](README.en.md)
 
+<a href="https://github.com/user-attachments/assets/dfc735c3-65fb-473a-a437-747efd8ede20"><img src="docs/demo-poster.jpg" width="640" alt="دموی ویدیویی پارسی‌گو — انتخاب صدا، تایپ متن و تولید گفتار در وب‌اپ"></a>
+
 https://github.com/user-attachments/assets/dfc735c3-65fb-473a-a437-747efd8ede20
 
 🎬 **دموی ویدیویی ۷۰ ثانیه‌ای (با صدا)** — انتخاب صدای مرجع، تولید جملهٔ نمونه،

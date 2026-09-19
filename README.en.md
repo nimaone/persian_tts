@@ -4,6 +4,8 @@
 
 **Persian** | [English](README.en.md)
 
+<a href="https://github.com/user-attachments/assets/dfc735c3-65fb-473a-a437-747efd8ede20"><img src="docs/demo-poster.jpg" width="640" alt="ParSiGo video demo — picking a reference voice, typing text and synthesising speech in the web app"></a>
+
 https://github.com/user-attachments/assets/dfc735c3-65fb-473a-a437-747efd8ede20
 
 🎬 **70-second video demo (with audio)** — picking a reference voice,
