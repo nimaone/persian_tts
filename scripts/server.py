@@ -9,6 +9,7 @@
 #   GET  /api/audio/{id}    generated WAV
 #   POST /api/voice/upload  upload a custom voice (auto-trimmed to 5 s)
 import io
+import os
 import re
 import sys
 import threading
@@ -212,7 +213,11 @@ async def upload_voice(file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
+    # defaults keep the demo loopback-only; 0.0.0.0 exposes an
+    # unauthenticated demo (disk-writing upload included) — opt in
+    host = os.environ.get("PARSIGO_HOST", "127.0.0.1")
+    port = int(os.environ.get("PARSIGO_PORT", "8000"))
     print("loading engine (first request may take a moment)...")
     get_engine()
-    print("demo:  http://127.0.0.1:8000")
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+    print(f"demo:  http://{host}:{port}")
+    uvicorn.run(app, host=host, port=port, log_level="warning")

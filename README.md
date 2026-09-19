@@ -20,6 +20,7 @@
   صحت‌سنجی.
 
 دموی وب: `./env/Scripts/python.exe scripts/server.py` → http://127.0.0.1:8000
+(host/port با متغیرهای محیطی `PARSIGO_HOST`/`PARSIGO_PORT` قابل تغییر است)
 
 - 🎧 **نمونه صدا (بدون نصب):** [دموی آنلاین](https://nimaone-persian-tts-onnx.static.hf.space)
   — سه صدای داخلی رو آنلاین گوش بدید.

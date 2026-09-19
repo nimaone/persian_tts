@@ -16,6 +16,7 @@ It has two execution paths:
 - **Main torch path** (`scripts/tts.py`) — the reference pocket-tts pipeline; for development and validation.
 
 Web demo: `./env/Scripts/python.exe scripts/server.py` → http://127.0.0.1:8000
+(host/port overridable via the `PARSIGO_HOST`/`PARSIGO_PORT` environment variables)
 
 - 🎧 **Audio sample (no install needed):** [Online demo](https://nimaone-persian-tts-onnx.static.hf.space) — listen to three built-in voices online.
 - 📦 **Ready ONNX package:** [`Nimaone/pocket-tts-farsi-v2-onnx`](https://huggingface.co/Nimaone/pocket-tts-farsi-v2-onnx) — no need for torch or building the package; download and run directly.

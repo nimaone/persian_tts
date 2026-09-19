@@ -275,6 +275,9 @@ def trim_hot_onset(audio: np.ndarray, sr: int, head_ms: int = 300,
 
 
 class OnnxTts:
+    # voice-prompt KV cache budget: ~19 MB per entry -> ~76 MB held
+    VOICE_MEMO_MAX = 4
+
     def __init__(self, pkg_dir=PKG, seed=None):
         # seed=None draws OS entropy: every run differs, so the README's
         # "rebuild a bad generation" advice actually works. Pass an int
@@ -302,7 +305,7 @@ class OnnxTts:
         # voice prompt KV caches, memoised by (path, mtime): encoding a
         # reference voice costs ~0.5 s and synthesis runs per SENTENCE —
         # a 6-sentence paragraph paid it 6 times. Entries are ~19 MB each,
-        # so keep only the most recently used few.
+        # so VOICE_MEMO_MAX caps the cache at ~76 MB (LRU).
         self._voice_memo: dict = {}
         opts = ort.SessionOptions()
         opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -389,7 +392,7 @@ class OnnxTts:
             np.zeros((1, 0, self.ldim), np.float32), text_emb, 0,
             np.zeros((1, self.ldim), np.float32), cache)
         self._voice_memo[key] = (cache, off)
-        while len(self._voice_memo) > 4:
+        while len(self._voice_memo) > self.VOICE_MEMO_MAX:
             self._voice_memo.pop(next(iter(self._voice_memo)))
         return cache, off
 
@@ -419,7 +422,7 @@ class OnnxTts:
         mode="pack" merges comma-delimited phrases into longer breathing
         units (pack_phrases) — punctuation pauses survive only at strong
         lead-ins (colon/semicolon/dash)."""
-        if any("؀" <= ch <= "ۿ" for ch in text):
+        if any("\u0600" <= ch <= "\u06FF" for ch in text):
             from g2p_onnx import OnnxG2P
 
             if not hasattr(self, "_g2p"):

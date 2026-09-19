@@ -321,9 +321,10 @@ $("txt").addEventListener("input", count); count();
 
 /* ---------- toast ---------- */
 let toastT;
+const TOAST_MS = 3200;
 function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.classList.add("show");
-  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), 3200);
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), TOAST_MS);
 }
 
 /* ---------- upload ---------- */
@@ -392,6 +393,17 @@ function drawCanvas(prog) {
   }
 }
 
+function computePeaks(data) {
+  const N = 160, step = Math.floor(data.length / N), p = new Array(N);
+  for (let i = 0; i < N; i++) {
+    let m = 0;
+    for (let j = 0; j < step; j += 16) m = Math.max(m, Math.abs(data[i * step + j]));
+    p[i] = m;
+  }
+  const mx = Math.max(...p, 0.01);
+  return p.map(v => v / mx);
+}
+
 async function present(r, text) {
   curId = r.id; curDur = r.duration;
   $("result").classList.add("show");
@@ -403,16 +415,7 @@ async function present(r, text) {
   const buf = await fetch(`/api/audio/${r.id}`).then(x => x.arrayBuffer());
   const actx = new (window.AudioContext || window.webkitAudioContext)();
   const ab = await actx.decodeAudioData(buf.slice(0));
-  const data = ab.getChannelData(0);
-  const N = 160, step = Math.floor(data.length / N);
-  peaks = new Array(N);
-  for (let i = 0; i < N; i++) {
-    let m = 0;
-    for (let j = 0; j < step; j += 16) m = Math.max(m, Math.abs(data[i * step + j]));
-    peaks[i] = m;
-  }
-  const mx = Math.max(...peaks, 0.01);
-  peaks = peaks.map(p => p / mx);
+  peaks = computePeaks(ab.getChannelData(0));
 
   const au = $("au");
   au.src = URL.createObjectURL(new Blob([buf], { type: "audio/wav" }));
@@ -459,13 +462,14 @@ $("wave").addEventListener("pointerdown", e => {
 $("dl").onclick = () => {
   if (!curId) return;
   const a = document.createElement("a");
-  a.href = `/api/audio/${curId}`; a.download = "parigo.wav"; a.click();
+  a.href = `/api/audio/${curId}`; a.download = "parsigo.wav"; a.click();
 };
 
 /* ---------- history ---------- */
+const HISTORY_SHOWN = 8;  // rows rendered; older entries stay in `history`
 function renderHistory() {
   $("histWrap").style.display = history.length ? "block" : "none";
-  $("hist").innerHTML = history.slice(0, 8).map((h, i) => `
+  $("hist").innerHTML = history.slice(0, HISTORY_SHOWN).map((h, i) => `
     <div class="hrow" data-i="${i}">
       <span class="hplay"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
       <span class="htx">${h.text}</span>
@@ -478,11 +482,7 @@ function renderHistory() {
     fetch(`/api/audio/${h.id}`).then(x => x.arrayBuffer()).then(async buf => {
       const actx = new (window.AudioContext || window.webkitAudioContext)();
       const ab = await actx.decodeAudioData(buf.slice(0));
-      const data = ab.getChannelData(0), N = 160, step = Math.floor(data.length / N);
-      peaks = new Array(N);
-      for (let i = 0; i < N; i++) { let m = 0;
-        for (let j = 0; j < step; j += 16) m = Math.max(m, Math.abs(data[i*step+j])); peaks[i] = m; }
-      const mx = Math.max(...peaks, 0.01); peaks = peaks.map(p => p / mx);
+      peaks = computePeaks(ab.getChannelData(0));
       draw(0);
     });
     au.play().then(() => setPlayIcon(true)).catch(() => {});
