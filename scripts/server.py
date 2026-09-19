@@ -9,6 +9,7 @@
 #   GET  /api/audio/{id}    generated WAV
 #   POST /api/voice/upload  upload a custom voice (auto-trimmed to 5 s)
 import io
+import json
 import os
 import re
 import sys
@@ -51,7 +52,14 @@ _store_lock = threading.Lock()
 # engine (single source of truth for where pauses fall and how long they
 # last): PAUSE_S is the sentence-final pause — a real reader stops at a
 # period, not just breathes (comma is 0.16 in the engine)
-from tts_onnx import SENTENCE_GAP as PAUSE_S, plan_phrases, pack_phrases  # noqa: E402
+from tts_onnx import PKG, SENTENCE_GAP as PAUSE_S, plan_phrases, pack_phrases  # noqa: E402
+
+# the model's audio format, from the same manifest key the engine reads — a
+# future model with a different rate flows through the resample/pause math
+# here instead of silently writing wrong-rate WAVs. Deliberately read from
+# the static manifest, NOT from get_engine(), so a voice upload never
+# triggers a full engine load.
+SR: int = json.loads((PKG / "manifest.json").read_text(encoding="utf-8"))["constants"]["sample_rate"]
 
 
 def get_engine():
