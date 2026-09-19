@@ -4,7 +4,7 @@
 
 <h1 align="center">ParSiGo (Persian Text-to-Speech)</h1>
 
-<p align="center"><sub>pocket-tts-farsi-v2</sub></p>
+<p align="center"><b>pocket-tts-farsi-v2 — ONNX version setup</b></p>
 
 **Persian** | [English](README.en.md)
 
