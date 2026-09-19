@@ -4,10 +4,12 @@
 
 **Persian** | [English](README.en.md)
 
-<a href="docs/demo.mp4"><img src="docs/demo-poster.jpg" width="640" alt="ParSiGo video demo — picking a reference voice, typing text and synthesising speech in the web app"></a>
+https://github.com/user-attachments/assets/dfc735c3-65fb-473a-a437-747efd8ede20
 
-🎬 **[70-second video demo (with audio)](docs/demo.mp4)** — picking a reference voice,
+🎬 **70-second video demo (with audio)** — picking a reference voice,
 synthesising a sample sentence, uploading a 5-second voice clip and cloning it onto a long paragraph.
+(downloadable copy in the repo: [docs/demo.mp4](docs/demo.mp4) — poster:
+[docs/demo-poster.jpg](docs/demo-poster.jpg))
 
 </div>
 
