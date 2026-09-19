@@ -120,6 +120,12 @@ def voices():
     return {"voices": list_voices()}
 
 
+@app.get("/api/config")
+def config():
+    """UI bootstrap values — the text cap lives here, not hardcoded in the HTML."""
+    return {"max_text": MAX_TEXT}
+
+
 @app.post("/api/tts")
 def tts(req: TTSRequest):
     text = req.text.strip()
