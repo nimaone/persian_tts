@@ -1,17 +1,15 @@
-
-
-
 <div align="center">
 
 <img src="web/logo.png" width="128" alt="لوگوی پارسی‌گو">
 
 **فارسی** | [English](README.en.md)
 
-<a href="docs/demo.mp4"><img src="docs/demo-poster.jpg" width="640" alt="دموی ویدیویی پارسی‌گو — انتخاب صدا، تایپ متن و تولید گفتار در وب‌اپ"></a>
+https://github.com/user-attachments/assets/dfc735c3-65fb-473a-a437-747efd8ede20
 
-🎬 **[دموی ویدیویی ۷۰ ثانیه‌ای (با صدا)](https://github.com/user-attachments/assets/dfc735c3-65fb-473a-a437-747efd8ede20
-)** — انتخاب صدای مرجع، تولید جملهٔ نمونه،
+🎬 **دموی ویدیویی ۷۰ ثانیه‌ای (با صدا)** — انتخاب صدای مرجع، تولید جملهٔ نمونه،
 آپلود یک نمونهٔ صوتی ۵ ثانیه‌ای و کلونینگ آن روی یک پاراگراف بلند.
+(نسخهٔ دانلودی داخل ریپو: [docs/demo.mp4](docs/demo.mp4) — پوستر:
+[docs/demo-poster.jpg](docs/demo-poster.jpg))
 
 </div>
 
