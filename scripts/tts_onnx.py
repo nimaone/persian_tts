@@ -9,10 +9,10 @@
 #
 # CLI:
 #   python scripts/tts_onnx.py "salAm hAle SomA Cetor ?ast" voices/male_hello.wav out.wav
+import argparse
 import json
 import os
 import re
-import sys
 import time
 from pathlib import Path
 
@@ -961,31 +961,34 @@ class OnnxTts:
 
 
 def main():
-    args = sys.argv[1:]
-    seed = None
-    if "--seed" in args:  # "--seed 42" — reproduce a run exactly
-        i = args.index("--seed")
-        seed = int(args[i + 1])
-        args = args[:i] + args[i + 2:]
-    mode = "split"
-    if "--pack" in args:  # merge comma phrases into longer breaths
-        args = [a for a in args if a != "--pack"]
-        mode = "pack"
-    text = args[0] if args else "سلام، حال شما چطور است؟"
-    voice = args[1] if len(args) > 1 else str(BASE / "voices" / "male_hello.wav")
-    out = args[2] if len(args) > 2 else str(BASE / "output" / "tts_onnx.wav")
+    ap = argparse.ArgumentParser(
+        description="Persian TTS via the pure-ONNX engine (no torch)")
+    ap.add_argument("text", nargs="?", default="سلام، حال شما چطور است؟",
+                    help="Persian text or phonemes")
+    ap.add_argument("voice", nargs="?",
+                    default=str(BASE / "voices" / "male_hello.wav"),
+                    help="reference voice WAV")
+    ap.add_argument("out", nargs="?",
+                    default=str(BASE / "output" / "tts_onnx.wav"),
+                    help="output WAV path")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="reproduce a run exactly")
+    ap.add_argument("--pack", action="store_true",
+                    help="merge comma phrases into longer breaths")
+    args = ap.parse_args()
 
-    eng = OnnxTts(seed=seed)
+    eng = OnnxTts(seed=args.seed)
     t0 = time.perf_counter()
-    audio = eng.synthesize_text(text, voice, mode=mode)
+    audio = eng.synthesize_text(args.text, args.voice,
+                                mode="pack" if args.pack else "split")
     dt = time.perf_counter() - t0
 
     import soundfile as sf
 
-    Path(out).parent.mkdir(parents=True, exist_ok=True)
-    sf.write(out, audio, eng.sample_rate)
-    print(f"text: {text}")
-    print(f"generated {len(audio)/eng.sample_rate:.2f}s audio in {dt:.2f}s -> {out}")
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    sf.write(args.out, audio, eng.sample_rate)
+    print(f"text: {args.text}")
+    print(f"generated {len(audio)/eng.sample_rate:.2f}s audio in {dt:.2f}s -> {args.out}")
 
 
 if __name__ == "__main__":
