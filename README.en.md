@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="web/logo.svg" width="128" alt="ParSiGo logo">
+<img src="web/logo.png" width="128" alt="ParSiGo logo">
 
 **Persian** | [English](README.en.md)
 

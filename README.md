@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="web/logo.svg" width="128" alt="لوگوی پارسی‌گو">
+<img src="web/logo.png" width="128" alt="لوگوی پارسی‌گو">
 
 **فارسی** | [English](README.en.md)
 
