@@ -266,11 +266,32 @@ def trim_hot_onset(audio: np.ndarray, sr: int, head_ms: int = 300,
     builtin references start with ~250 ms of near-silence (-48 / -36 dB) and
     never do this. Measured remedy: drop the leading 300 ms (four seeds and
     the full sentence come out clean; head peak 1.385 -> 0.025, head rms
-    9 -> 27 dB below the chunk body). A prompt that opens at a normal level is
-    returned untouched, so this costs nothing for voices that are already fine
-    — and it also covers uploads, which only get trimmed to 5 s and never had
-    their onset looked at. Prompts too short to lose `head_ms` keep their burst
-    (min_keep_s): a 0.9 s prompt would hurt the clone more than the leak."""
+    9 -> 27 dB below the chunk body).
+
+    The attack is located relative to the SPEECH START, not to t=0: uploads
+    routinely carry leading silence, and one real one (a clip opening with
+    ~0.75 s of digital silence and then a full-scale clipped «سلام» at +6-9 dB
+    over its own body) sailed past the old first-300 ms window untrimmed —
+    every chunk then opened with that greeting while the rest of the render
+    truncated (3.09 s vs 4.22 s for the same sentence+seed; head-vs-burst
+    spectral cos 0.83 vs the 0.46 healthy baseline). Two fire paths, because
+    the burst shapes differ (measured over all five current references):
+
+    - attack MEAN well above the body (male_hello +5.8 dB, male_news +6.5 dB):
+      the syllable sustains, the 300 ms window carries it;
+    - the file CLIPS (peak >= 0.99) while the attack pokes above the body
+      (the upload: peak 1.00, attack max +8.2 dB but mean only -0.1 dB — its
+      ~150 ms burst is diluted by the body inside the window). Clipping is
+      the tell: healthy references peak at 0.37-0.79, and a normal consonant
+      transient can spike a frame as hard as a clipped burst does (59da's
+      attack max is +8.8 dB at peak 0.37 and it is perfectly fine).
+
+    When a path fires, everything from t=0 through attack-end is dropped —
+    the leading silence goes with it, which also hands the encoder a denser
+    prompt. A prompt that opens at a normal level is returned untouched, so
+    this costs nothing for voices that are already fine. Prompts too short
+    to lose the attack keep it (min_keep_s): a 0.9 s prompt would hurt the
+    clone more than the leak."""
     if len(audio) < sr:                       # too short to judge
         return audio, 0
     h = max(1, int(0.01 * sr))
@@ -280,14 +301,19 @@ def trim_hot_onset(audio: np.ndarray, sr: int, head_ms: int = 300,
         return audio, 0
     frames = np.sqrt(np.array([(audio[i * h:(i + 1) * h] ** 2).mean()
                                for i in range(nf)], dtype=np.float64))
-    speech = frames[frames > 0.02 * peak]     # frames carrying real audio
+    loud = frames > 0.02 * peak               # frames carrying real audio
+    speech = frames[loud]
     if not len(speech):
         return audio, 0
     typical = float(np.median(speech))
-    head = frames[: max(1, int(head_ms / 10))]
-    if float(np.sqrt((head ** 2).mean())) <= typical * 10 ** (thresh_db / 20):
+    onset = int(np.argmax(loud))              # first frame with real audio
+    attack = frames[onset : onset + max(1, int(head_ms / 10))]
+    loud_enough = typical * 10 ** (thresh_db / 20)
+    hot = (float(np.sqrt((attack ** 2).mean())) > loud_enough
+           or (peak >= 0.99 and float(attack.max()) > loud_enough))
+    if not hot:
         return audio, 0
-    drop = int(head_ms / 1000 * sr)
+    drop = onset * h + int(head_ms / 1000 * sr)
     if len(audio) - drop < min_keep_s * sr:
         return audio, 0
     out = audio[drop:].copy()
