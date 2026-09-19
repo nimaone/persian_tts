@@ -31,9 +31,6 @@ WEB = BASE / "web" / "index.html"
 UPLOAD_DIR = BASE / "uploads" / "voices"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-SR = 24000
-PAUSE_S = 0.45          # pause between sentences — a real reader stops at a
-                        # period, not just breathes (comma is 0.16 in the engine)
 MAX_TEXT = 800          # keep demo requests bounded
 MAX_VOICES = 64
 
@@ -50,9 +47,11 @@ _engine_lock = threading.Lock()
 _audio_store: dict[str, dict] = {}
 _store_lock = threading.Lock()
 
-# punctuation-aware phrase splitting lives with the engine (single source of
-# truth for where pauses may fall)
-from tts_onnx import plan_phrases, pack_phrases  # noqa: E402
+# punctuation-aware phrase splitting and the pause lengths live with the
+# engine (single source of truth for where pauses fall and how long they
+# last): PAUSE_S is the sentence-final pause — a real reader stops at a
+# period, not just breathes (comma is 0.16 in the engine)
+from tts_onnx import SENTENCE_GAP as PAUSE_S, plan_phrases, pack_phrases  # noqa: E402
 
 
 def get_engine():

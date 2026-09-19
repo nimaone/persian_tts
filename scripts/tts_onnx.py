@@ -52,9 +52,14 @@ _STRONG_LEADIN = (":", "؛", "—", "–")
 
 # pause lengths shared by the plan/pack layers (seconds): a strong lead-in
 # (colon/semicolon/dash) gets a real stop, a comma a short breath; the
-# 0.45 s sentence pause is inserted by the caller, outside these layers
+# sentence pause is inserted by the caller — server and CLI both read
+# SENTENCE_GAP so the two paths cannot drift apart
 _STRONG_GAP = 0.26
 _PHRASE_GAP = 0.16
+SENTENCE_GAP = 0.45
+# gap at a fresh-chunk boundary inside one sentence (an unrelated knob from
+# the _compress_pauses keep=0.12, which shortens leftover dead air)
+_CHUNK_GAP = 0.12
 
 
 def _letter_words(tp: str) -> list[str]:
@@ -438,7 +443,7 @@ class OnnxTts:
                 if plan:
                     sentences.append(plan)
             print("phonemes:", " ".join(" ".join(p for p, _ in s) for s in sentences))
-            parts, silence = [], np.zeros(int(0.45 * self.sample_rate), np.float32)
+            parts, silence = [], np.zeros(int(SENTENCE_GAP * self.sample_rate), np.float32)
             for plan in sentences:
                 parts.append(self.synthesize(plan, voice_wav, pace=pace))
                 parts.append(silence)
@@ -690,7 +695,7 @@ class OnnxTts:
                 elif ci == 0:
                     gap = pgap if pgap is not None else _PHRASE_GAP
                 else:
-                    gap = 0.12
+                    gap = _CHUNK_GAP
                 jobs.append((chunk, gap))
 
         # chunks are independent (each generates from the pristine voice
