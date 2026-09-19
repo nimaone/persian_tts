@@ -5,10 +5,12 @@
       <stop offset="0" stop-color="#ff7a59"/>
       <stop offset="1" stop-color="#ffb454"/>
     </linearGradient>
-    <filter id="logo-shadow" x="-30%" y="-30%" width="160%" height="160%">
-      <feDropShadow dx="0" dy="6" stdDeviation="6" flood-color="#ff7a59" flood-opacity="0.35"/>
-    </filter>
+    <linearGradient id="logo-gloss" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".22"/>
+      <stop offset=".55" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
   </defs>
-  <rect width="24" height="24" rx="6.545" fill="url(#logo-gradient)" filter="url(#logo-shadow)"/>
-  <path d="M3 12h2l2-6 3 12 3-16 3 16 2-6h3" fill="none" stroke="#231303" stroke-width="2.4" stroke-linecap="round"/>
+  <rect width="24" height="24" rx="6.545" fill="url(#logo-gradient)"/>
+  <rect width="24" height="24" rx="6.545" fill="url(#logo-gloss)"/>
+  <path d="M3 13.5h2l2-6 3 12 3-16 3 16 2-6h3" fill="none" stroke="#231303" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
