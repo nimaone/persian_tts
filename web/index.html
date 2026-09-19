@@ -8,7 +8,7 @@
 :root{
   --bg:#0c0e13; --surface:#141824; --surface-2:#1a1f2e; --border:#252b3d;
   --text:#edeef2; --muted:#8f96a8; --faint:#5c6275;
-  --accent:#ff7a59; --accent-2:#ffb454;
+  --accent:#ff7a59; --accent-2:#ffb454; --on-accent:#231303;
   --grad:linear-gradient(90deg,var(--accent),var(--accent-2));
   --radius:14px; --radius-s:10px;
   --shadow:0 12px 40px rgba(0,0,0,.35);
@@ -31,7 +31,7 @@ body{
 header{display:flex;align-items:center;gap:14px;margin-bottom:30px}
 .logo{width:44px;height:44px;border-radius:12px;background:var(--grad);
   display:grid;place-items:center;flex-shrink:0;box-shadow:0 6px 20px rgba(255,122,89,.35)}
-.logo svg{width:24px;height:24px}
+.logo svg{width:24px;height:24px;stroke:var(--on-accent)}
 h1{font-size:22px;font-weight:800;letter-spacing:-.3px}
 .sub{font-size:12.5px;color:var(--muted);margin-top:-4px}
 .badge{margin-inline-start:auto;font-size:11.5px;color:var(--accent-2);
@@ -71,7 +71,7 @@ textarea::placeholder{color:var(--faint)}
 .vcard.sel{border-color:var(--accent);background:rgba(255,122,89,.07)}
 .vcard .ic{width:38px;height:38px;border-radius:50%;flex-shrink:0;
   display:grid;place-items:center;background:var(--surface);border:1px solid var(--border)}
-.vcard.sel .ic{background:var(--grad);border:none}
+.vcard.sel .ic{background:var(--grad);border:none;color:var(--on-accent)}
 .vcard .ic svg{width:17px;height:17px}
 .vcard .nm{font-size:13.5px;font-weight:700}
 .vcard .ds{font-size:11.5px;color:var(--muted);margin-top:-3px}
@@ -88,7 +88,7 @@ textarea::placeholder{color:var(--faint)}
 .pchip{font-size:11.5px;color:var(--muted);background:transparent;border:1px solid var(--border);
   border-radius:99px;padding:4px 11px;cursor:pointer;transition:all .18s;font-family:inherit}
 .pchip:hover{color:var(--text)}
-.pchip.sel{color:#231303;background:var(--grad);border-color:transparent;font-weight:700}
+.pchip.sel{color:var(--on-accent);background:var(--grad);border-color:transparent;font-weight:700}
 input[type=range]{flex:1;min-width:120px;appearance:none;-webkit-appearance:none;height:5px;
   border-radius:99px;background:var(--surface-2);outline:none;direction:ltr}
 input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:17px;height:17px;
@@ -100,7 +100,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 
 /* ---------- generate ---------- */
 .go{width:100%;margin-top:16px;border:none;border-radius:var(--radius-s);cursor:pointer;
-  background:var(--grad);color:#231303;font:inherit;font-size:15.5px;font-weight:800;
+  background:var(--grad);color:var(--on-accent);font:inherit;font-size:15.5px;font-weight:800;
   padding:14px;display:flex;align-items:center;justify-content:center;gap:10px;
   box-shadow:0 8px 24px rgba(255,122,89,.3);transition:transform .15s,box-shadow .15s}
 .go:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 12px 30px rgba(255,122,89,.4)}
@@ -108,7 +108,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .go svg{width:19px;height:19px}
 
 .eq{display:none;gap:3px;align-items:flex-end;height:18px}
-.eq i{width:3.5px;background:#231303;border-radius:2px;animation:eq 1s ease-in-out infinite}
+.eq i{width:3.5px;background:var(--on-accent);border-radius:2px;animation:eq 1s ease-in-out infinite}
 .eq i:nth-child(1){height:8px;animation-delay:0s}.eq i:nth-child(2){height:16px;animation-delay:.15s}
 .eq i:nth-child(3){height:11px;animation-delay:.3s}.eq i:nth-child(4){height:15px;animation-delay:.45s}
 @keyframes eq{0%,100%{transform:scaleY(.4)}50%{transform:scaleY(1)}}
@@ -130,7 +130,7 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
   background:var(--grad);display:grid;place-items:center;
   box-shadow:0 6px 18px rgba(255,122,89,.35);transition:transform .15s}
 .play:hover{transform:scale(1.06)}
-.play svg{width:20px;height:20px}
+.play svg{width:20px;height:20px;fill:var(--on-accent)}
 .wave{flex:1;height:74px;position:relative;cursor:pointer}
 canvas{width:100%;height:100%;border-radius:8px}
 .tm{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;min-width:86px;text-align:center}
@@ -167,7 +167,7 @@ footer b{color:var(--muted);font-weight:600}
 
   <header>
     <div class="logo">
-      <svg viewBox="0 0 24 24" fill="none" stroke="#231303" stroke-width="2.4" stroke-linecap="round">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="2.4" stroke-linecap="round">
         <path d="M3 13.5h2l2-6 3 12 3-16 3 16 2-6h3"/>
       </svg>
     </div>
@@ -227,8 +227,8 @@ footer b{color:var(--muted);font-weight:600}
     <div class="ph" id="ph"></div>
     <div class="player">
       <button class="play" id="play">
-        <svg id="icPlay" viewBox="0 0 24 24" fill="#231303"><path d="M8 5v14l11-7z"/></svg>
-        <svg id="icPause" viewBox="0 0 24 24" fill="#231303" style="display:none"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
+        <svg id="icPlay" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+        <svg id="icPause" viewBox="0 0 24 24" style="display:none"><path d="M6 5h4v14H6zM14 5h4v14h-4z"/></svg>
       </button>
       <div class="wave" id="wave"><canvas id="cv"></canvas></div>
       <div class="tm" id="tm">۰:۰۰ / ۰:۰۰</div>
@@ -256,6 +256,12 @@ const $ = id => document.getElementById(id);
 const fa = n => String(n).replace(/\d/g, d => "۰۱۲۳۴۵۶۷۸۹"[d]);
 const fmt = s => { s = Math.max(0, s|0); return fa((s/60|0)) + ":" + fa(String(s%60).padStart(2,"0")); };
 
+// the waveform gradient follows the theme: read the CSS custom properties
+// once at load (no theme switching here, so the cache never goes stale)
+const cssVar = (name, fallback) =>
+  (getComputedStyle(document.documentElement).getPropertyValue(name) || "").trim() || fallback;
+const ACCENT = cssVar("--accent", "#ff7a59"), ACCENT_2 = cssVar("--accent-2", "#ffb454");
+
 let VOICES = [], selVoice = null;
 let peaks = null, curId = null, curDur = 0, history = [];
 
@@ -272,7 +278,7 @@ function renderVoices() {
     <button class="vcard ${v.id===selVoice?"sel":""}" data-id="${v.id}">
       <span class="ic">
         ${v.id===selVoice
-          ? '<svg viewBox="0 0 24 24" fill="none" stroke="#231303" stroke-width="2.4" stroke-linecap="round"><path d="M3 12h2l2-6 3 12 3-16 3 16 2-6h3"/></svg>'
+          ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M3 12h2l2-6 3 12 3-16 3 16 2-6h3"/></svg>'
           : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3z"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3"/></svg>'}
       </span>
       <span><div class="nm">${v.name}</div><div class="ds">${v.desc}</div></span>
@@ -381,7 +387,7 @@ function drawCanvas(prog) {
   const n = peaks.length, bw = w / n;
   const mid = h / 2;
   const g = ctx.createLinearGradient(0, 0, w, 0);
-  g.addColorStop(0, "#ff7a59"); g.addColorStop(1, "#ffb454");
+  g.addColorStop(0, ACCENT); g.addColorStop(1, ACCENT_2);
   for (let i = 0; i < n; i++) {
     const bh = Math.max(3 * dpr, peaks[i] * h * 0.92);
     const played = i / n <= prog;
