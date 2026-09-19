@@ -6,7 +6,7 @@
 
 <a href="docs/demo.mp4"><img src="docs/demo-poster.jpg" width="640" alt="ParSiGo video demo — picking a reference voice, typing text and synthesising speech in the web app"></a>
 
-🎬 **[60-second video demo (with audio)](docs/demo.mp4)** — picking a reference voice,
+🎬 **[70-second video demo (with audio)](docs/demo.mp4)** — picking a reference voice,
 synthesising a sample sentence, uploading a 5-second voice clip and cloning it onto a long paragraph.
 
 </div>
