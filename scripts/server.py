@@ -33,6 +33,7 @@ UPLOAD_DIR = BASE / "uploads" / "voices"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_TEXT = 800          # keep demo requests bounded
+MAX_PHONEMES = 2400     # editable manual-phoneme input cap
 MAX_VOICES = 64
 
 BUILTIN_VOICE_META = {
@@ -110,6 +111,17 @@ class TTSRequest(BaseModel):
     mode: str = "split"   # split: pause at every punctuation | pack: long breaths
 
 
+class PhonemizeRequest(BaseModel):
+    text: str
+    mode: str = "split"
+
+
+class PhonemeTTSRequest(BaseModel):
+    phonemes: str
+    voice: str
+    pace: float = 1.0
+
+
 @app.get("/")
 def index():
     return FileResponse(WEB)
@@ -123,7 +135,77 @@ def voices():
 @app.get("/api/config")
 def config():
     """UI bootstrap values — the text cap lives here, not hardcoded in the HTML."""
-    return {"max_text": MAX_TEXT}
+    return {"max_text": MAX_TEXT, "max_phonemes": MAX_PHONEMES}
+
+
+@app.post("/api/phonemize")
+def phonemize(req: PhonemizeRequest):
+    """Convert Persian text to editable phonemes without generating audio."""
+    text = req.text.strip()
+    if not text:
+        raise HTTPException(400, "متن خالی است")
+    if len(text) > MAX_TEXT:
+        raise HTTPException(400, f"متن طولانی است (حداکثر {MAX_TEXT} نویسه)")
+    if req.mode not in ("split", "pack"):
+        raise HTTPException(400, "حالت گفتار باید split یا pack باشد")
+
+    engine = get_engine()
+    phonemes_all = []
+    with _engine_lock:
+        for sent in split_sentences(text):
+            try:
+                plan = plan_phrases(sent, engine._g2p, engine.sp)
+            except ValueError as e:
+                raise HTTPException(400, "متن فارسی معتبری پیدا نشد") from e
+            if req.mode == "pack":
+                plan = pack_phrases(plan)
+            phonemes_all.extend(p.replace("1", "") for p, _ in plan)
+
+    phonemes = " ".join(phonemes_all).strip()
+    if not phonemes:
+        raise HTTPException(400, "فونمی تولید نشد")
+    return {"phonemes": phonemes}
+
+
+@app.post("/api/tts-phonemes")
+def tts_phonemes(req: PhonemeTTSRequest):
+    """Generate speech directly from a user-edited phoneme string."""
+    phonemes = req.phonemes.strip()
+    if not phonemes:
+        raise HTTPException(400, "فونم خالی است")
+    if len(phonemes) > MAX_PHONEMES:
+        raise HTTPException(400, f"فونم طولانی است (حداکثر {MAX_PHONEMES} نویسه)")
+    if any("\u0600" <= ch <= "\u06FF" for ch in phonemes):
+        raise HTTPException(400, "در کادر فونم فقط فونم لاتین وارد کنید؛ متن فارسی را در کادر متن بنویسید")
+
+    engine = get_engine()
+    pace = float(min(max(req.pace, 0.6), 1.5))
+    with _engine_lock:
+        audio = engine.synthesize(phonemes, voice_path(req.voice), pace=pace)
+
+    if len(audio) == 0:
+        raise HTTPException(400, "صوتی تولید نشد")
+    duration = len(audio) / SR
+    buf = io.BytesIO()
+    sf.write(buf, audio, SR, format="WAV")
+    audio_id = uuid.uuid4().hex[:12]
+    with _store_lock:
+        _audio_store[audio_id] = {
+            "wav": buf.getvalue(),
+            "text": phonemes,
+            "voice": req.voice,
+            "duration": duration,
+            "phonemes": phonemes,
+        }
+    return {
+        "id": audio_id,
+        "phonemes": phonemes,
+        "duration": round(duration, 2),
+        "pace": pace,
+        "mode": "manual-phonemes",
+        "sentences": 1,
+        "elapsed": None,
+    }
 
 
 @app.post("/api/tts")

@@ -115,6 +115,18 @@ input[type=range]::-moz-range-thumb{width:14px;height:14px;border-radius:50%;bac
 .go:disabled{opacity:.75;cursor:wait}
 .go svg{width:19px;height:19px}
 
+.ph-tools{margin-top:10px}
+.ph-prep{width:100%;border:1px solid var(--border);border-radius:var(--radius-s);
+  background:var(--surface-2);color:var(--muted);font:inherit;font-size:13px;font-weight:700;
+  padding:10px 12px;cursor:pointer;transition:all .18s}
+.ph-prep:hover:not(:disabled){color:var(--text);border-color:var(--accent)}
+.ph-prep:disabled{opacity:.65;cursor:wait}
+.ph-editor{display:none;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)}
+.ph-editor.show{display:block}
+#phInput{min-height:105px;direction:ltr;text-align:left;font-family:"Cascadia Code",Consolas,monospace;
+  font-size:12.5px;line-height:1.7}
+.ph-hint{font-size:11.5px;color:var(--faint);margin-top:7px;line-height:1.7}
+
 .eq{display:none;gap:3px;align-items:flex-end;height:18px}
 .eq i{width:3.5px;background:var(--on-accent);border-radius:2px;animation:eq 1s ease-in-out infinite}
 .eq i:nth-child(1){height:8px;animation-delay:0s}.eq i:nth-child(2){height:16px;animation-delay:.15s}
@@ -217,6 +229,16 @@ footer b{color:var(--muted);font-weight:600}
         </span>
         <span class="eq"><i></i><i></i><i></i><i></i></span>
       </button>
+
+      <div class="ph-tools">
+        <button class="ph-prep" id="phPrep">اصلاح تلفظ / ویرایش فونم</button>
+        <div class="ph-editor" id="phEditor">
+          <div class="label"><span>فونم قابل ویرایش</span><span class="cnt">لاتین</span></div>
+          <textarea id="phInput" dir="ltr" spellcheck="false" placeholder="فونم تولیدشده اینجا نمایش داده می‌شود…"></textarea>
+          <div class="ph-hint">اگر تلفظ واژه‌ای اشتباه است، فقط همان بخش را اصلاح کنید؛ مثلاً <b>tost</b> را به <b>test</b> تغییر دهید.</div>
+          <button class="go" id="phGo">ساخت گفتار از فونم اصلاح‌شده</button>
+        </div>
+      </div>
     </section>
 
     <aside class="panel">
@@ -363,6 +385,50 @@ async function sendFile(f) {
   toast(`صدا اضافه شد (${fa(r.seconds)} ثانیه)`);
   await loadVoices(); selVoice = r.id; renderVoices();
 }
+
+/* ---------- manual phonemes ---------- */
+$("phPrep").onclick = async () => {
+  const text = $("txt").value.trim();
+  if (!text) return toast("متنی بنویسید");
+  const b = $("phPrep"), old = b.textContent;
+  b.disabled = true; b.textContent = "در حال تبدیل متن به فونم…";
+  try {
+    const r = await fetch("/api/phonemize", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, mode }),
+    }).then(r => r.json());
+    if (r.detail) return toast(typeof r.detail === "string" ? r.detail : "خطا در تبدیل به فونم");
+    $("phInput").value = r.phonemes;
+    $("phEditor").classList.add("show");
+    $("phInput").focus();
+  } catch (e) { toast("ارتباط با سرور برقرار نشد"); }
+  finally { b.disabled = false; b.textContent = old; }
+};
+
+$("phGo").onclick = async () => {
+  const phonemes = $("phInput").value.trim();
+  if (!phonemes) return toast("فونم خالی است");
+  const b = $("phGo"), old = b.textContent;
+  const t0 = performance.now();
+  b.disabled = true;
+  b.textContent = "در حال ساخت… ۰ ثانیه";
+  const tick = setInterval(() => {
+    b.textContent = `در حال ساخت… ${fa(((performance.now()-t0)/1000).toFixed(0))} ثانیه`;
+  }, 250);
+  try {
+    const r = await fetch("/api/tts-phonemes", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phonemes, voice: selVoice, pace: +paceEl.value }),
+    }).then(r => r.json());
+    if (r.detail) return toast(typeof r.detail === "string" ? r.detail : "خطا در تولید");
+    await present(r, $("txt").value.trim());
+  } catch (e) { toast("ارتباط با سرور برقرار نشد"); }
+  finally {
+    clearInterval(tick);
+    b.disabled = false;
+    b.textContent = old;
+  }
+};
 
 /* ---------- generate ---------- */
 $("go").onclick = async () => {
