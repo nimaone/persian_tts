@@ -183,6 +183,20 @@ Then in browser: http://127.0.0.1:8000
 4. Click **Generate Speech**; phonemes, audio duration, and waveform are displayed after generation.
 5. Play the output, scrub forward and backward on the waveform, download the WAV, or replay from the last 8 history entries.
 
+### Manual Phoneme Editing (Pronunciation Correction)
+
+If the G2P mispronounces a word (e.g. producing "tost" for the English word "test", which is
+read as «تُست» instead of «تِست»), you can manually correct the phonemes:
+
+1. Type the text and click **"Edit Phonemes / Correct Pronunciation"**.
+2. The generated phonemes appear in an editable text box.
+3. Correct the mispronounced part — e.g. change `tost` to `test`.
+4. Click **"Generate Speech from Edited Phonemes"** — audio is produced directly from the
+   phonemes without re-running G2P.
+
+> **Note:** Only Latin characters are allowed in the phoneme box. If you enter Persian
+> characters, you will get an error — write Persian text in the main text box above.
+
 - Persian RTL interface with modern dark theme (`web/index.html`) — no internet needed
 - Reference voice selection + **upload your own voice** (WAV/MP3/OGG/FLAC; automatically trimmed to 5 seconds, mono, and resampled to 24kHz; minimum 1 second required)
 - **Two speech modes**: "with comma pauses" (split — each comma/dash gets its own pause) and "smooth and continuous" (pack — comma phrases merged into longer breaths; period/dash/sentence-end pauses preserved)
@@ -260,6 +274,8 @@ print(OnnxG2P().phonemise("اقتصاد آمریکا"))   # -> "?eqtesAde ?Amrik
 | `GET` | `/` | — | Demo page (`web/index.html`) |
 | `GET` | `/api/voices` | — | `{voices: [{id, name, desc, builtin}]}` |
 | `POST` | `/api/tts` | `{text, voice, pace?, mode?}` | `{id, phonemes, duration, pace, mode, sentences}` |
+| `POST` | `/api/phonemize` | `{text, mode?}` | `{phonemes}` |
+| `POST` | `/api/tts-phonemes` | `{phonemes, voice, pace?}` | `{id, phonemes, duration, pace, mode, sentences}` |
 | `GET` | `/api/audio/{id}` | — | WAV (`audio/wav`) |
 | `POST` | `/api/voice/upload` | `multipart/form-data` (field `file`) | `{id, name, seconds}` |
 
@@ -271,6 +287,18 @@ curl -X POST localhost:8000/api/tts \
   -d '{"text":"سلام، حال شما چطور است؟","voice":"male_hello.wav","mode":"pack"}'
 # -> {"id":"a1b2c3d4e5f6","phonemes":"salAm hAle SomA Cetor ?ast","duration":2.41,...}
 # Audio:  curl localhost:8000/api/audio/a1b2c3d4e5f6 --output out.wav
+
+# Convert text to phonemes (without generating audio):
+curl -X POST localhost:8000/api/phonemize \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"اولین test را انجام دادم","mode":"split"}'
+# -> {"phonemes":"?avvalin tost rA ?anjAm dAdam"}
+
+# Generate speech from corrected phonemes:
+curl -X POST localhost:8000/api/tts-phonemes \
+  -H 'Content-Type: application/json' \
+  -d '{"phonemes":"?avvalin test rA ?anjAm dAdam","voice":"male_hello.wav"}'
+# -> {"id":"b2c3d4e5f6a1","phonemes":"?avvalin test rA ?anjAm dAdam","duration":1.57,...}
 ```
 
 - `voice` is either a built-in voice name or `upload:NAME.wav` (from `/api/voices`).
