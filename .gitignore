@@ -12,6 +12,7 @@ model/
 output/
 uploads/
 tmp/
+temp_test/
 *.log
 
 # OS / editors
