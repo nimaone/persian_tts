@@ -223,6 +223,20 @@ for f in config.json generation_config.json tokenizer_config.json added_tokens.j
 4. **ساخت گفتار** را بزنید؛ فونم‌ها، مدت صدا و موج‌نگار پس از تولید نمایش داده می‌شوند.
 5. خروجی را پخش، در موج‌نگار جلو و عقب ببرید، WAV آن را دانلود یا از تاریخچهٔ ۸ مورد اخیر دوباره پخش کنید.
 
+### ویرایش دستی فونم (اصلاح تلفظ)
+
+اگر G2P واژه‌ای را اشتباه تلفظ کرد (مثلاً «test» انگلیسی را به‌صورت «tost» = «تُست»
+تولید کرد)، می‌توانید فونم‌ها را دستی اصلاح کنید:
+
+1. متن را در کادر بنویسید و **«اصلاح تلفظ / ویرایش فونم»** را بزنید.
+2. فونم‌های تولیدشده در کادر قابل‌ویرایش نمایش داده می‌شوند.
+3. بخش اشتباه را اصلاح کنید؛ مثلاً `tost` را به `test` تغییر دهید.
+4. **«ساخت گفتار از فونم اصلاح‌شده»** را بزنید — صدا مستقیماً از فونم تولید می‌شود
+   و متن دوباره از G2P عبور نمی‌کند.
+
+> **نکته:** در کادر فونم فقط حروف لاتین مجاز است. اگر حروف فارسی بنویسید، خطا
+> دریافت می‌کنید — متن فارسی را در کادر بالاتر بنویسید.
+
 - رابط فارسی RTL با تم تیره مدرن (`web/index.html`) — بدون نیاز به اینترنت
 - انتخاب صدای مرجع + **بارگذاری صدای خودتان** (WAV/MP3/OGG/FLAC؛ خودکار به ۵ ثانیه
   بریده، یک کاناله و به ۲۴kHz ресample می‌شود؛ حداقل ۱ ثانیه لازم است)
@@ -305,6 +319,8 @@ print(OnnxG2P().phonemise("اقتصاد آمریکا"))   # -> "?eqtesAde ?Amrik
 | `GET` | `/` | — | صفحهٔ دمو (`web/index.html`) |
 | `GET` | `/api/voices` | — | `{voices: [{id, name, desc, builtin}]}` |
 | `POST` | `/api/tts` | `{text, voice, pace?, mode?}` | `{id, phonemes, duration, pace, mode, sentences}` |
+| `POST` | `/api/phonemize` | `{text, mode?}` | `{phonemes}` |
+| `POST` | `/api/tts-phonemes` | `{phonemes, voice, pace?}` | `{id, phonemes, duration, pace, mode, sentences}` |
 | `GET` | `/api/audio/{id}` | — | WAV (`audio/wav`) |
 | `POST` | `/api/voice/upload` | `multipart/form-data` (فیلد `file`) | `{id, name, seconds}` |
 
@@ -316,6 +332,18 @@ curl -X POST localhost:8000/api/tts \
   -d '{"text":"سلام، حال شما چطور است؟","voice":"male_hello.wav","mode":"pack"}'
 # -> {"id":"a1b2c3d4e5f6","phonemes":"salAm hAle SomA Cetor ?ast","duration":2.41,...}
 # صدا:  curl localhost:8000/api/audio/a1b2c3d4e5f6 --output out.wav
+
+# تبدیل متن به فونم (بدون ساخت صدا):
+curl -X POST localhost:8000/api/phonemize \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"اولین test را انجام دادم","mode":"split"}'
+# -> {"phonemes":"?avvalin tost rA ?anjAm dAdam"}
+
+# ساخت صدا از فونم اصلاح‌شده:
+curl -X POST localhost:8000/api/tts-phonemes \
+  -H 'Content-Type: application/json' \
+  -d '{"phonemes":"?avvalin test rA ?anjAm dAdam","voice":"male_hello.wav"}'
+# -> {"id":"b2c3d4e5f6a1","phonemes":"?avvalin test rA ?anjAm dAdam","duration":1.57,...}
 ```
 
 - `voice` یا نام یک صدای داخلی است یا `upload:NAME.wav` (از `/api/voices`).
