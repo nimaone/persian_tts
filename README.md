@@ -21,14 +21,15 @@ https://github.com/user-attachments/assets/dfc735c3-65fb-473a-a437-747efd8ede20
 
 تبدیل متن فارسی به گفتار با **کلونینگ صدا**، کاملاً آفلاین روی **CPU** — بدون GPU، بدون
 ارتباط با اینترنت در زمان اجرا. متن فارسی را مستقیم می‌گیرد، فونم‌سازی و سنتز را خودش
-انجام می‌دهد و خروجی WAV با نرخ نمونه ۲۴ کیلوهرتز میدهد.
+انجام می‌دهد و خروجی WAV با نرخ نمونه ۲۴ کیلوهرتز میدهد. (اجرای روی GPU هم به‌صورت
+اختیاری و بدون torch پشتیبانی می‌شود — [بخش GPU](#اجرای-روی-gpu-اختیاری--کاملاً-بدون-torch).)
 
-دو مسیر اجرا دارد:
-
-- **موتور ONNX خالص** (`scripts/tts_onnx.py` + `scripts/server.py`) — بدون torch،
-  وابستگی‌های نصب‌شده ~۲۰۰MB در ویندوز (در برابر ~۱٫۲GB با torch)، هم‌سرعت موتور اصلی.
-- **مسیر torch اصلی** (`scripts/tts.py`) — خط لوله مرجع pocket-tts؛ برای توسعه و
-  صحت‌سنجی.
+معماری برنامه **موتور-محور** است: سرور (`scripts/server.py`) هر موتور موجود را
+lazy بار می‌کند و UI هم موتورهای نصب‌شده را به‌صورت خودکار نشان می‌دهد
+(presence-driven — موتوری که کدش یا وزن‌هایش نباشد اصلاً لیست نمی‌شود). موتور
+عمومی «پارسی‌گو» (pocket) فونم را ورودی می‌گیرد (G2P خودکار + ویرایش دستی)، روی
+pocket-tts-farsi-v2 (FlowLM ۶ لایه) با ONNX خالص (بدون torch) و RTF ~۰٫۹ سنتز
+می‌کند و یک مسیر torch مرجع (`scripts/tts.py`) هم برای توسعه و صحت‌سنجی دارد.
 
 دموی وب: `./env/Scripts/python.exe scripts/server.py` → http://127.0.0.1:8000
 (host/port با متغیرهای محیطی `PARSIGO_HOST`/`PARSIGO_PORT` قابل تغییر است)
@@ -105,6 +106,22 @@ quantization به دلیل shape inference ناقصِ sliceهای داینامی
 نمی‌کند — برای هدف «اجرا روی هر سیستمی» انتخاب نشد. جزئیات کاملِ اندازه‌گیری‌ها در
 [`docs/onnx-optimizations.md`](docs/onnx-optimizations.md).
 
+## اجرای روی GPU (اختیاری — کاملاً بدون torch)
+
+موتورها با ONNX Runtime اجرا می‌شوند و مسیر GPU هم همان است — بدون CUDA SDK دستی و بدون PyTorch:
+
+```bash
+pip uninstall -y onnxruntime
+pip install -r requirements-gpu.txt
+```
+
+- **DirectML** (`onnxruntime-directml`) — جامع‌ترین: هر GPU با DirectX 12 (NVIDIA/AMD/Intel)، فقط درایور، بدون هیچ SDK. پیشنهاد پیش‌فرض.
+- **CUDA** (`onnxruntime-gpu`) — سریع‌ترین روی انویدیا: GPUهای Maxwell (9xx) به بعد؛ برای RTX 50xx بیلد CUDA 12.8+ لازم است.
+
+**رفتار هوشمند:** موتور موقع بارگذاری، اگر provider گرافیکی موجود باشد یک میکروبنچمارک یک‌گامی GPU در برابر CPU می‌گیرد و بردنده را انتخاب می‌کند — GPU ناموجود، کند (مثل کارت‌های قدیمی ۲GB) یا کم‌حافظه، شفاف به CPU برمی‌گردد و هیچ تنظیمی لازم نیست. اجبار دستی: متغیر محیطی `PARSIGO_EP=cpu|cuda|dml`.
+
+نکته: `onnxruntime-directml`/`onnxruntime-gpu` جایگزین پکیج CPU می‌شوند (یک import مشترک)؛ CPU provider داخلشان باقی می‌ماند. برای سرعت واقعی GPU (مثلاً T4 کولاب)، CUDA EP با `PARSIGO_EP=cuda` سریع‌ترین است.
+
 ## ساختار پروژه
 
 ```
@@ -126,7 +143,7 @@ persian_tts/
 │   ├── server.py      سرور دموی وب (FastAPI) + API
 │   ├── export_unified.py  سازندهٔ پکیج model/onnx/ (یکبار، با torch)
 │   ├── test_tts_onnx.py   صحت‌سنجی و بنچمارک موتور ONNX در برابر torch
-│   └── onnx_dev/      اسکریپت‌های توسعه ONNX (spike/bench؛ تاریخی)
+│   └── onnx_dev/      اسکریپت‌های توسعه ONNX (spike/parity؛ تاریخی)
 ├── web/index.html     رابط فارسی RTL دموی وب
 ├── README.md          مستندات فارسی
 └── README.en.md       English documentation
@@ -214,6 +231,11 @@ for f in config.json generation_config.json tokenizer_config.json added_tokens.j
 سپس در مرورگر: http://127.0.0.1:8000
 
 ![نمای دموی وب پارسی‌گو](web/readme-demo.png)
+
+موتورها به‌صورت خودکار از `/api/config` می‌آیند: هر موتوری که روی ماشین نصب
+باشد چیپ خودش را کنار انتخاب صدا دارد (در نصب‌های چندموتوره، موتورهای بدون
+مرحلهٔ فونم تب فونم را غیرفعال می‌کنند). نشان کنار هر موتور، دستگاه اجرا را
+نشان می‌دهد (CPU / GPU).
 
 ### نحوهٔ کار با دمو
 
@@ -317,8 +339,9 @@ print(OnnxG2P().phonemise("اقتصاد آمریکا"))   # -> "?eqtesAde ?Amrik
 | روش | مسیر | ورودی | خروجی |
 |---|---|---|---|
 | `GET` | `/` | — | صفحهٔ دمو (`web/index.html`) |
+| `GET` | `/api/config` | — | `{max_text, max_phonemes, engines: [{id, name, phonemes, available}]}` |
 | `GET` | `/api/voices` | — | `{voices: [{id, name, desc, builtin}]}` |
-| `POST` | `/api/tts` | `{text, voice, pace?, mode?}` | `{id, phonemes, duration, pace, mode, sentences}` |
+| `POST` | `/api/tts` | `{text, voice, pace?, mode?, engine?}` | `{id, phonemes, duration, pace, mode, sentences, engine}` |
 | `POST` | `/api/phonemize` | `{text, mode?}` | `{phonemes}` |
 | `POST` | `/api/tts-phonemes` | `{phonemes, voice, pace?}` | `{id, phonemes, duration, pace, mode, sentences}` |
 | `GET` | `/api/audio/{id}` | — | WAV (`audio/wav`) |
@@ -348,6 +371,9 @@ curl -X POST localhost:8000/api/tts-phonemes \
 
 - `voice` یا نام یک صدای داخلی است یا `upload:NAME.wav` (از `/api/voices`).
 - `mode` باید `split` یا `pack` باشد؛ `pace` در ۰٫۶–۱٫۵ محدود می‌شود.
+- `engine` شناسهٔ موتور است (`pocket` پیش‌فرض)؛ لیست موتورهای نصب‌شده از
+  `/api/config` می‌آید. `/api/phonemize` و `/api/tts-phonemes` فقط برای pocket
+  هستند (موتورهای بدون مرحلهٔ فونم این endpointها را نمی‌پذیرند).
 - صداهای بارگذاری‌شده در `uploads/voices/` ذخیره می‌شوند (در گیت نیستند).
 
 ## نکات مهم و رفع مشکل
@@ -399,7 +425,10 @@ curl -X POST localhost:8000/api/tts-phonemes \
 | G2P فارسی→فونم | [`mehdi-hf/Homo-GE2PE-Persian-HF`](https://huggingface.co/mehdi-hf/Homo-GE2PE-Persian-HF) | بازبسته‌بندی از [`MahtaFetrat/Homo-GE2PE-Persian`](https://huggingface.co/MahtaFetrat/Homo-GE2PE-Persian) نوشتهٔ **Elnaz Rahmati** و همکاران | MIT © 2025 Elnaz Rahmati |
 | کتابخانه و معماری پایه | [`pocket-tts`](https://pypi.org/project/pocket-tts/) نسخهٔ ۳.۱.۰ | [Kyutai](https://kyutai.org) | MIT |
 
-**هشدار مجوز — استفادهٔ تجاری ممنوع:** مدل TTS با مجوز **CC-BY-NC-4.0** منتشر شده است (محدودیتی که از دادهٔ آموزش به ارث رسیده) و استفادهٔ تجاری از خروجی آن مجاز نیست. برای استفادهٔ تجاری باید از سازنده مجوز بگیرید یا سراغ مدل دیگری بروید.
+**هشدارهای مجوز:**
+
+- مدل pocket با مجوز **CC-BY-NC-4.0** منتشر شده است (محدودیتی که از دادهٔ آموزش
+  به ارث رسیده) و استفادهٔ تجاری از خروجی آن مجاز نیست.
 
 **دربارهٔ G2P:** آنچه در `mehdi-hf/Homo-GE2PE-Persian-HF` قرار دارد مدل جدیدی نیست؛ وزن‌ها بایت‌به‌بایت همان `MahtaFetrat/Homo-GE2PE-Persian` هستند و تغییر فقط در بسته‌بندی است (فرمت `from_pretrained` بدون وابستگی به Parsivar). همهٔ اعتبار مدل به نویسندگان اصلی می‌رسد.
 

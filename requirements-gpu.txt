@@ -1,0 +1,31 @@
+# ---------------------------------------------------------------------------
+# اجرای GPU — اختیاری (برنامه بدون این فایل روی CPU کار می‌کند)
+# GPU acceleration — OPTIONAL (the app runs fine on CPU without this file).
+#
+# این فایل جایگزین پکیج onnxruntime (CPU) می‌شود — هر دو یک import دارند و
+# CPU provider داخلشان هست، پس همه‌چیز روی همه سیستم‌ها کار می‌کند.
+# This REPLACES the CPU onnxruntime package (same import name); the CPU
+# execution provider stays available inside it, so everything still works
+# on machines without a usable GPU (the engine auto-falls back to CPU).
+#
+# نصب / install:
+#   pip uninstall -y onnxruntime
+#   pip install -r requirements-gpu.txt
+#
+# فقط یکی از دو خط زیر را فعال کنید / uncomment ONE of the two options:
+#
+# 1) DirectML — جامع‌ترین: هر GPU با DirectX 12 (NVIDIA/AMD/Intel)، فقط
+#    درایور، بدون CUDA/ROCm/PyTorch. پیشنهاد پیش‌فرض.
+#    The universal one: any DX12 GPU (NVIDIA/AMD/Intel), drivers only,
+#    no CUDA SDK, no torch.
+onnxruntime-directml>=1.20
+#
+# 2) CUDA — سریع‌ترین روی انویدیا؛ GPUهای Maxwell (9xx) به بعد؛
+#    برای RTX 50xx بیلد CUDA 12.8+ لازم است.
+#    Fastest on NVIDIA; Maxwell (9xx)+; RTX 50xx needs a CUDA 12.8+ build.
+# onnxruntime-gpu>=1.20
+#
+# موتور موقع بارگذاری، provider را با میکروبنچمارک انتخاب می‌کند و در صورت
+# نبود/کندی GPU شفاف به CPU برمی‌گردد. اجبار دستی: PARSIGO_EP=cpu|cuda|dml
+# The engine picks the provider with a micro-benchmark at load and falls
+# back to CPU transparently; force one with PARSIGO_EP=cpu|cuda|dml.

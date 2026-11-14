@@ -19,12 +19,15 @@ synthesising a sample sentence, uploading a 5-second voice clip and cloning it o
 
 </div>
 
-Persian text-to-speech with **voice cloning**, fully offline on **CPU** — no GPU, no internet connection at runtime. It takes Persian text directly, performs phonemisation and synthesis itself, and outputs WAV at a 24 kHz sample rate.
+Persian text-to-speech with **voice cloning**, fully offline on **CPU** — no GPU, no internet connection at runtime. It takes Persian text directly, performs phonemisation and synthesis itself, and outputs WAV at a 24 kHz sample rate. Optional torch-free GPU execution is supported too — see the [GPU section](#gpu-execution-optional--still-torch-free).
 
-It has two execution paths:
-
-- **Pure ONNX Runtime engine** (`scripts/tts_onnx.py` + `scripts/server.py`) — no torch; installed dependencies are ~200MB on Windows (versus ~1.2GB with torch), same speed as the main engine.
-- **Main torch path** (`scripts/tts.py`) — the reference pocket-tts pipeline; for development and validation.
+The architecture is **engine-centric**: the server (`scripts/server.py`) loads
+each installed engine lazily and the UI automatically lists whatever engines
+are present (presence-driven — an engine whose code or weights are missing is
+not listed at all). The public "Parsigo" engine (pocket) takes phonemes as
+input (automatic G2P + manual editing), runs pocket-tts-farsi-v2 (6-layer
+FlowLM) on pure ONNX (no torch) at ~0.9× RTF, and has a reference torch path
+(`scripts/tts.py`) for development and validation.
 
 Web demo: `./env/Scripts/python.exe scripts/server.py` → http://127.0.0.1:8000
 (host/port overridable via the `PARSIGO_HOST`/`PARSIGO_PORT` environment variables)
@@ -70,6 +73,29 @@ The ONNX path was not just "getting the export" — the initial export on CPU wa
 
 Both paths were **tried and did not work** (recorded so it does not repeat): IOBinding with reattachment at each step was **slower** (82.6ms vs 74.4ms per step), and int8 quantization was not possible due to incomplete shape inference of dynamic slice operations. A hybrid engine (FlowLM in torch + Mimi in ONNX) was 13% faster than torch itself but did not eliminate torch — it was not chosen for the "runs on any system" goal. Full measurement details in [`docs/onnx-optimizations.md`](docs/onnx-optimizations.md).
 
+## GPU Execution (Optional — Still Torch-Free)
+
+Both engines run on ONNX Runtime; GPU acceleration rides the same architecture — no CUDA SDK setup, no PyTorch:
+
+```bash
+pip uninstall -y onnxruntime
+pip install -r requirements-gpu.txt
+```
+
+- **DirectML** (`onnxruntime-directml`) — the universal one: any DirectX-12 GPU (NVIDIA/AMD/Intel), drivers only. Recommended default.
+- **CUDA** (`onnxruntime-gpu`) — fastest on NVIDIA: Maxwell (9xx) or newer; RTX 50xx needs a CUDA 12.8+ build.
+
+**Smart selection:** at load, if a GPU provider is present the engine runs a
+one-step micro-benchmark (GPU vs CPU) and keeps the winner — an absent, slow
+(old 2 GB cards) or small-VRAM GPU transparently falls back to CPU, nothing
+to configure. Override with the `PARSIGO_EP=cpu|cuda|dml` environment
+variable.
+
+Note: the GPU packages replace the CPU `onnxruntime` package (shared import
+name); the CPU execution provider remains available inside them. For real
+GPU throughput (e.g. a Colab T4), the CUDA EP with `PARSIGO_EP=cuda` is the
+fastest route.
+
 ## Project Structure
 
 ```
@@ -81,7 +107,7 @@ persian_tts/
 │   └── onnx/          Integrated ONNX package (~480MB) + manifest.json
 ├── voices/            Reference voices (≤ 5 seconds)
 ├── output/            Generated WAV files (not in git)
-├── uploads/           Uploaded voices via demo (not in git)
+├── uploads/            Uploaded voices via demo (not in git)
 ├── docs/              Technical docs: ONNX feasibility and optimizations
 ├── scripts/
 │   ├── persian_tts.py Pipeline torch module (load_g2p, phonemise, synthesize)
@@ -91,7 +117,7 @@ persian_tts/
 │   ├── server.py      Web demo server (FastAPI) + API
 │   ├── export_unified.py Unified package builder for model/onnx/ (one-time, with torch)
 │   ├── test_tts_onnx.py ONNX engine validation and benchmark vs torch
-│   └── onnx_dev/      ONNX development scripts (spike/bench; historical)
+│   └── onnx_dev/      ONNX development scripts (spike/parity; historical)
 ├── web/index.html     Persian RTL web demo UI
 ├── README.md          Persian documentation
 └── README.en.md       English documentation
@@ -272,8 +298,9 @@ print(OnnxG2P().phonemise("اقتصاد آمریکا"))   # -> "?eqtesAde ?Amrik
 | Method | Path | Input | Output |
 |---|---|---|---|
 | `GET` | `/` | — | Demo page (`web/index.html`) |
+| `GET` | `/api/config` | — | `{max_text, max_phonemes, engines: [{id, name, phonemes, available}]}` |
 | `GET` | `/api/voices` | — | `{voices: [{id, name, desc, builtin}]}` |
-| `POST` | `/api/tts` | `{text, voice, pace?, mode?}` | `{id, phonemes, duration, pace, mode, sentences}` |
+| `POST` | `/api/tts` | `{text, voice, pace?, mode?, engine?}` | `{id, phonemes, duration, pace, mode, sentences, engine}` |
 | `POST` | `/api/phonemize` | `{text, mode?}` | `{phonemes}` |
 | `POST` | `/api/tts-phonemes` | `{phonemes, voice, pace?}` | `{id, phonemes, duration, pace, mode, sentences}` |
 | `GET` | `/api/audio/{id}` | — | WAV (`audio/wav`) |
@@ -303,6 +330,9 @@ curl -X POST localhost:8000/api/tts-phonemes \
 
 - `voice` is either a built-in voice name or `upload:NAME.wav` (from `/api/voices`).
 - `mode` must be `split` or `pack`; `pace` is limited to 0.6–1.5.
+- `engine` is the engine id (`pocket` is the default); installed engines are
+  listed by `/api/config`. `/api/phonemize` and `/api/tts-phonemes` are
+  pocket-only (engines without a phoneme stage reject these endpoints).
 - Uploaded voices are stored in `uploads/voices/` (not in git).
 
 ## Important Notes and Troubleshooting
@@ -339,7 +369,11 @@ Model weights are not created by this repository; this project uses models publi
 | Persian→Phoneme G2P | [`mehdi-hf/Homo-GE2PE-Persian-HF`](https://huggingface.co/mehdi-hf/Homo-GE2PE-Persian-HF) | Backport from [`MahtaFetrat/Homo-GE2PE-Persian`](https://huggingface.co/MahtaFetrat/Homo-GE2PE-Persian) written by **Elnaz Rahmati** and colleagues | MIT © 2025 Elnaz Rahmati |
 | Base library and architecture | [`pocket-tts`](https://pypi.org/project/pocket-tts/) version 3.1.0 | [Kyutai](https://kyutai.org) | MIT |
 
-**License Warning — Commercial Use Prohibited:** The TTS model is released under **CC-BY-NC-4.0** (a restriction inherited from the training data) and commercial use of its output is not permitted. For commercial use you must obtain a license from the creator or look for a different model.
+**License warnings:**
+
+- The pocket TTS model is released under **CC-BY-NC-4.0** (a restriction
+  inherited from the training data); commercial use of its output is not
+  permitted.
 
 **About G2P:** What is in `mehdi-hf/Homo-GE2PE-Persian-HF` is not a new model; the weights are byte-by-byte the same as `MahtaFetrat/Homo-GE2PE-Persian` and the only change is packaging (from_pretrained format without dependency on Parsivar). All model credit goes to the original authors.
 

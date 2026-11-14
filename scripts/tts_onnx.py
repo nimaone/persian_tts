@@ -20,6 +20,8 @@ import numpy as np
 import onnxruntime as ort
 import sentencepiece as spm
 
+import ort_providers
+
 BASE = Path(__file__).resolve().parent.parent
 PKG = BASE / "model" / "onnx"
 
@@ -363,10 +365,17 @@ class OnnxTts:
         # to avoid 4x oversubscription on an 8-core box
         opts.intra_op_num_threads = 2
         opts.inter_op_num_threads = 1
-        prov = ["CPUExecutionProvider"]
-        self.s_flow = ort.InferenceSession(str(self.dir / "flow_lm_step.onnx"), opts, providers=prov)
-        self.s_enc = ort.InferenceSession(str(self.dir / "mimi_encoder.onnx"), opts, providers=prov)
-        self.s_dec = ort.InferenceSession(str(self.dir / "mimi_decoder_step_kv.onnx"), opts, providers=prov)
+        self.prov = ort_providers.smart_providers(
+            self.dir / "flow_lm_step.onnx", opts,
+            {"sequence": np.zeros((1, 1, 32), np.float32),
+             "text_emb": np.zeros((1, 64, 1024), np.float32),
+             "offset": np.array(0, np.int64),
+             "noise": np.zeros((1, 32), np.float32),
+             "cache": np.zeros((6, 2, 384, 16, 64), np.float32)})
+        self.device_label = ort_providers.device_label(self.prov)
+        self.s_flow = ort.InferenceSession(str(self.dir / "flow_lm_step.onnx"), opts, providers=self.prov)
+        self.s_enc = ort.InferenceSession(str(self.dir / "mimi_encoder.onnx"), opts, providers=self.prov)
+        self.s_dec = ort.InferenceSession(str(self.dir / "mimi_decoder_step_kv.onnx"), opts, providers=self.prov)
 
         # decoder state layout: inputs s0..sN follow the export's dec_keys
         # order; npz keys carry "module.state_key" so we can find the caches.

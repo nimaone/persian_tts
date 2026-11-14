@@ -18,3 +18,8 @@ temp_test/
 # OS / editors
 .DS_Store
 Thumbs.db
+
+# harness session files
+.zcode/
+.zcodeignore
+onnxruntime_profile__*.json

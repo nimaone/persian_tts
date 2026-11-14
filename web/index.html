@@ -97,6 +97,7 @@ textarea::placeholder{color:var(--faint)}
   border-radius:99px;padding:4px 11px;cursor:pointer;transition:all .18s;font-family:inherit}
 .pchip:hover{color:var(--text)}
 .pchip.sel{color:var(--on-accent);background:var(--grad);border-color:transparent;font-weight:700}
+.pdev{font-size:9.5px;margin-inline-start:5px;opacity:.75;border:1px solid currentColor;border-radius:99px;padding:0 5px}
 input[type=range]{flex:1;min-width:120px;appearance:none;-webkit-appearance:none;height:5px;
   border-radius:99px;background:var(--surface-2);outline:none;direction:ltr}
 input[type=range]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:17px;height:17px;
@@ -179,6 +180,11 @@ footer b{color:var(--muted);font-weight:600}
   background:var(--surface-2);border:1px solid var(--border);border-radius:99px;
   padding:10px 20px;font-size:13px;box-shadow:var(--shadow);display:none;z-index:9}
 .toast.show{display:block;animation:rise .3s ease}
+
+/* engine chips: the unavailable one (weights not downloaded) greys out */
+.pchip.unavail{opacity:.4;cursor:not-allowed}
+.htag{font-size:10.5px;color:var(--accent-2);background:rgba(255,180,84,.1);
+  border-radius:99px;padding:2px 9px;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -195,7 +201,7 @@ footer b{color:var(--muted);font-weight:600}
       <h1>پارسی‌گو</h1>
       <div class="sub">تبدیل متن فارسی به گفتار، با کلونینگ صدای مرجع</div>
     </div>
-    <div class="badge">موتور ONNX · آفلاین · بدون torch</div>
+    <div class="badge" id="engineBadge">موتور ONNX · آفلاین · بدون torch</div>
   </header>
 
   <div class="grid">
@@ -204,6 +210,10 @@ footer b{color:var(--muted);font-weight:600}
       <textarea id="txt" placeholder="متن خود را بنویسید…">سلام، حال شما چطور است؟ امیدوارم روز خوبی داشته باشید.</textarea>
       <div class="chips" id="chips"></div>
       <div class="pace-row">
+        <span class="plabel">موتور گفتار</span>
+        <div class="pchips" id="engines"></div>
+      </div>
+      <div class="pace-row" id="modeRow">
         <span class="plabel">حالت گفتار</span>
         <div class="pchips">
           <button class="pchip sel" data-m="split" title="هر ویرگول و علامت، مکث خودش را می‌گیرد">با مکث ویرگول‌ها</button>
@@ -230,7 +240,7 @@ footer b{color:var(--muted);font-weight:600}
         <span class="eq"><i></i><i></i><i></i><i></i></span>
       </button>
 
-      <div class="ph-tools">
+      <div class="ph-tools" id="phTools">
         <button class="ph-prep" id="phPrep">اصلاح تلفظ / ویرایش فونم</button>
         <div class="ph-editor" id="phEditor">
           <div class="label"><span>فونم قابل ویرایش</span><span class="cnt">لاتین</span></div>
@@ -253,7 +263,7 @@ footer b{color:var(--muted);font-weight:600}
   </div>
 
   <section class="panel result" id="result">
-    <div class="label"><span>فونم‌های تولیدشده</span><span class="cnt" id="rmeta"></span></div>
+    <div class="label"><span id="rlabel">فونم‌های تولیدشده</span><span class="cnt" id="rmeta"></span></div>
     <div class="ph" id="ph"></div>
     <div class="player">
       <button class="play" id="play">
@@ -275,7 +285,7 @@ footer b{color:var(--muted);font-weight:600}
     <div id="hist"></div>
   </section>
 
-  <footer>ساخته‌شده با <b>pocket-tts-farsi-v2</b> روی <b>ONNX Runtime</b> — کاملاً آفلاین، بدون GPU</footer>
+  <footer><b>پارسی‌گو</b> — متن به گفتار فارسی روی ONNX Runtime، کاملاً آفلاین · موتورهای اضافه در صورت نصب به‌صورت خودکار اضافه می‌شوند</footer>
 </div>
 <div class="toast" id="toast"></div>
 <audio id="au" preload="auto"></audio>
@@ -351,12 +361,48 @@ document.querySelectorAll(".pchip[data-m]").forEach(c =>
     document.querySelectorAll(".pchip[data-m]").forEach(x => x.classList.toggle("sel", x === c));
   });
 
+/* ---------- engine ---------- */
+let ENG = localStorage.getItem("parsigo.eng") || "pocket";
+let ENGINES = [{ id: "pocket", name: "پارسی‌گو", phonemes: true, available: true }];
+function renderEngines() {
+  $("engines").innerHTML = ENGINES.map(e => `
+    <button class="pchip ${e.id===ENG?"sel":""} ${e.available?"":"unavail"}"
+      data-e="${e.id}" title="${e.available ? "": "این موتور فعلاً موجود نیست"}">${e.name}${e.device ? `<span class="pdev">${e.device}</span>` : ""}</button>`).join("");
+  document.querySelectorAll(".pchip[data-e]").forEach(c => c.onclick = () => {
+    if (!ENGINES.find(x => x.id === c.dataset.e).available)
+      return toast("این موتور فعلاً موجود نیست");
+    ENG = c.dataset.e;
+    localStorage.setItem("parsigo.eng", ENG);
+    renderEngines(); applyEngineUI();
+  });
+}
+function applyEngineUI() {
+  const spec = ENGINES.find(e => e.id === ENG) || {};
+  const phonemes = spec.phonemes !== false;   // pocket yes, chatterbox no
+  $("modeRow").style.display = phonemes ? "" : "none";
+  $("phTools").style.display = phonemes ? "" : "none";
+  // device badge: null until the engine is loaded server-side
+  const dev = spec.device ? ` · اجرا روی ${spec.device}` : "";
+  $("engineBadge").textContent = (phonemes
+    ? "موتور ONNX · آفلاین · بدون torch"
+    : "موتور چترباکس · متن خام · واترمارک‌دار") + dev;
+}
+
 /* ---------- counter ---------- */
 let MAX_TEXT = 800;  // fallback until /api/config answers; the server enforces the cap
 $("txt").maxLength = MAX_TEXT;
-fetch("/api/config").then(r => r.json()).then(c => {
-  if (c.max_text) { MAX_TEXT = c.max_text; $("txt").maxLength = MAX_TEXT; count(); }
-});
+function refreshConfig() {
+  fetch("/api/config").then(r => r.json()).then(c => {
+    if (c.max_text) { MAX_TEXT = c.max_text; $("txt").maxLength = MAX_TEXT; count(); }
+    if (c.engines) {
+      ENGINES = c.engines;
+      if (!ENGINES.find(e => e.id === ENG) || !ENGINES.find(e => e.id === ENG).available)
+        ENG = (ENGINES.find(e => e.available) || ENGINES[0] || {}).id || "pocket";
+      renderEngines(); applyEngineUI();
+    }
+  }).catch(() => {});
+}
+refreshConfig();
 function count() { $("cnt").textContent = fa($("txt").value.length) + " / " + fa(MAX_TEXT); }
 $("txt").addEventListener("input", count); count();
 
@@ -441,10 +487,11 @@ $("go").onclick = async () => {
   try {
     const r = await fetch("/api/tts", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, voice: selVoice, pace: +paceEl.value, mode }),
+      body: JSON.stringify({ text, voice: selVoice, pace: +paceEl.value, mode, engine: ENG }),
     }).then(r => r.json());
     if (r.detail) return toast(typeof r.detail === "string" ? r.detail : "خطا در تولید");
     await present(r, text);
+    refreshConfig();   // the engine may have just loaded -> device badge update
   } catch (e) { toast("ارتباط با سرور برقرار نشد"); }
   finally {
     clearInterval(tick);
@@ -492,7 +539,9 @@ function computePeaks(data) {
 async function present(r, text) {
   curId = r.id; curDur = r.duration;
   $("result").classList.add("show");
-  $("ph").textContent = r.phonemes;
+  const isPhonemes = (r.engine || "pocket") !== "chatterbox" && r.phonemes;
+  $("rlabel").textContent = isPhonemes ? "فونم‌های تولیدشده" : "متن";
+  $("ph").textContent = isPhonemes ? r.phonemes : text;
   $("rmeta").textContent = `${fa(r.sentences)} جمله · ${fa(r.duration)} ثانیه`;
   $("result").scrollIntoView({ behavior: "smooth", block: "nearest" });
 
@@ -507,7 +556,7 @@ async function present(r, text) {
   au.onloadedmetadata = () => { curDur = au.duration; draw(0); };
   au.ontimeupdate = () => { if (! seeking) draw(au.currentTime / au.duration); };
   au.onended = () => setPlayIcon(false);
-  history.unshift({ id: r.id, text, dur: r.duration });
+  history.unshift({ id: r.id, text, dur: r.duration, eng: r.engine || "pocket" });
   renderHistory();
   draw(0);
   setPlayIcon(false);
@@ -553,11 +602,13 @@ $("dl").onclick = () => {
 /* ---------- history ---------- */
 const HISTORY_SHOWN = 8;  // rows rendered; older entries stay in `history`
 function renderHistory() {
+  const engName = { pocket: "پارسی‌گو", chatterbox: "چترباکس" };
   $("histWrap").style.display = history.length ? "block" : "none";
   $("hist").innerHTML = history.slice(0, HISTORY_SHOWN).map((h, i) => `
     <div class="hrow" data-i="${i}">
       <span class="hplay"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span>
       <span class="htx">${h.text}</span>
+      <span class="htag">${engName[h.eng] || ""}</span>
       <span class="hd">${fa(h.dur)} ثانیه</span>
     </div>`).join("");
   document.querySelectorAll(".hrow").forEach(row => row.onclick = () => {

@@ -8,6 +8,7 @@
 #   POST /api/tts           {text, voice} -> {id, phonemes, duration, ...}
 #   GET  /api/audio/{id}    generated WAV
 #   POST /api/voice/upload  upload a custom voice (auto-trimmed to 5 s)
+import importlib.util
 import io
 import json
 import os
@@ -44,8 +45,6 @@ BUILTIN_VOICE_META = {
 
 app = FastAPI(title="پارسی‌گو — Persian TTS demo")
 
-_engine = None
-_engine_lock = threading.Lock()
 _audio_store: dict[str, dict] = {}
 _store_lock = threading.Lock()
 
@@ -59,21 +58,72 @@ from tts_onnx import PKG, SENTENCE_GAP as PAUSE_S, plan_phrases, pack_phrases  #
 # future model with a different rate flows through the resample/pause math
 # here instead of silently writing wrong-rate WAVs. Deliberately read from
 # the static manifest, NOT from get_engine(), so a voice upload never
-# triggers a full engine load.
+# triggers a full engine load. Uploads are STORED at this rate and both
+# engines resample on their own side when they want something else.
 SR: int = json.loads((PKG / "manifest.json").read_text(encoding="utf-8"))["constants"]["sample_rate"]
 
+# ---------------------------------------------------------------------------
+# engines — the app is dual-engine, both pure ONNX:
+#   pocket     the original pocket-tts-farsi-v2 pipeline; phoneme based
+#              (G2P + editable phonemes)
+#   chatterbox the chatterbox-farsi fine-tune; raw Persian text in (no G2P),
+#              reference-voice cloning, Perth-watermarked output — the engine
+#              code ships PRIVATELY (license), never in this public repo; an
+#              install without the module simply hides the engine
+# Each engine loads lazily on first use behind its own lock — loading
+# chatterbox (~GBs of weights) must not delay a pocket request.
+ENGINE_SPECS = {
+    "pocket": {
+        "name": "پارسی‌گو", "module": "tts_onnx", "cls": "OnnxTts",
+        "phonemes": True,    # /api/phonemize + manual phoneme editing
+        "weights": None,     # ships with the repo (model/onnx/)
+    },
+    "chatterbox": {
+        "name": "چترباکس", "module": "chatterbox_onnx", "cls": "ChatterboxOnnx",
+        "phonemes": False,   # raw Persian text only
+        "weights": BASE / "model" / "chatterbox-onnx" / "manifest.json",
+    },
+}
+_engines: dict[str, object] = {}
+_engine_locks = {eid: threading.Lock() for eid in ENGINE_SPECS}
 
-def get_engine():
-    global _engine
-    if _engine is None:
-        from tts_onnx import OnnxTts
 
-        _engine = OnnxTts()
-        if not hasattr(_engine, "_g2p"):
-            from g2p_onnx import OnnxG2P
+def engine_available(eid: str) -> bool:
+    spec = ENGINE_SPECS[eid]
+    # some engine code ships privately (license) — a public clone must not
+    # even list the engine
+    if importlib.util.find_spec(spec["module"]) is None:
+        return False
+    w = spec["weights"]
+    return w is None or Path(w).is_file()
 
-            _engine._g2p = OnnxG2P(_engine.dir)
-    return _engine
+
+def get_engine(engine_id: str = "pocket"):
+    spec = ENGINE_SPECS.get(engine_id)
+    if spec is None:
+        raise HTTPException(400, f"موتور نامعتبر: {engine_id}")
+    if engine_id not in _engines:
+        with _engine_locks[engine_id]:
+            if engine_id not in _engines:
+                if not engine_available(engine_id):
+                    raise HTTPException(
+                        503, "این موتور در این نسخه موجود نیست — کد و وزن‌های "
+                             "چترباکس به‌دلیل لایسنس OncillaAI فقط به‌صورت "
+                             "خصوصی توزیع می‌شوند")
+                try:
+                    eng = getattr(importlib.import_module(spec["module"]),
+                                  spec["cls"])()
+                except ImportError as e:
+                    raise HTTPException(
+                        503, f"پکیج‌های موتور نصب نیستند: {e}") from e
+                if engine_id == "pocket" and not hasattr(eng, "_g2p"):
+                    # G2P rides on the pocket engine (the phrase planner uses
+                    # it); chatterbox has no phoneme stage at all
+                    from g2p_onnx import OnnxG2P
+
+                    eng._g2p = OnnxG2P(eng.dir)
+                _engines[engine_id] = eng
+    return _engines[engine_id]
 
 
 def split_sentences(text: str) -> list[str]:
@@ -109,6 +159,7 @@ class TTSRequest(BaseModel):
     voice: str
     pace: float = 1.0
     mode: str = "split"   # split: pause at every punctuation | pack: long breaths
+    engine: str = "pocket"  # pocket | chatterbox
 
 
 class PhonemizeRequest(BaseModel):
@@ -134,13 +185,27 @@ def voices():
 
 @app.get("/api/config")
 def config():
-    """UI bootstrap values — the text cap lives here, not hardcoded in the HTML."""
-    return {"max_text": MAX_TEXT, "max_phonemes": MAX_PHONEMES}
+    """UI bootstrap values — the text cap lives here, not hardcoded in the HTML;
+    the engine list drives the engine switch. Engines whose module/weights are
+    absent (private engine code, missing download) are not listed at all."""
+    return {
+        "max_text": MAX_TEXT,
+        "max_phonemes": MAX_PHONEMES,
+        "engines": [
+            {"id": eid, "name": s["name"], "phonemes": s["phonemes"],
+             "available": True,
+             # device badge (CPU / GPU (CUDA) / GPU (DirectML)) — null until
+             # the engine is first loaded (chatterbox preloads at startup)
+             "device": _engines[eid].device_label if eid in _engines else None}
+            for eid, s in ENGINE_SPECS.items() if engine_available(eid)
+        ],
+    }
 
 
 @app.post("/api/phonemize")
 def phonemize(req: PhonemizeRequest):
-    """Convert Persian text to editable phonemes without generating audio."""
+    """Convert Persian text to editable phonemes without generating audio.
+    Pocket-engine only: chatterbox reads Persian script directly (no G2P)."""
     text = req.text.strip()
     if not text:
         raise HTTPException(400, "متن خالی است")
@@ -149,9 +214,9 @@ def phonemize(req: PhonemizeRequest):
     if req.mode not in ("split", "pack"):
         raise HTTPException(400, "حالت گفتار باید split یا pack باشد")
 
-    engine = get_engine()
+    engine = get_engine("pocket")
     phonemes_all = []
-    with _engine_lock:
+    with _engine_locks["pocket"]:
         for sent in split_sentences(text):
             try:
                 plan = plan_phrases(sent, engine._g2p, engine.sp)
@@ -169,7 +234,8 @@ def phonemize(req: PhonemizeRequest):
 
 @app.post("/api/tts-phonemes")
 def tts_phonemes(req: PhonemeTTSRequest):
-    """Generate speech directly from a user-edited phoneme string."""
+    """Generate speech directly from a user-edited phoneme string.
+    Pocket-engine only: chatterbox has no phoneme stage to edit."""
     phonemes = req.phonemes.strip()
     if not phonemes:
         raise HTTPException(400, "فونم خالی است")
@@ -178,16 +244,16 @@ def tts_phonemes(req: PhonemeTTSRequest):
     if any("\u0600" <= ch <= "\u06FF" for ch in phonemes):
         raise HTTPException(400, "در کادر فونم فقط فونم لاتین وارد کنید؛ متن فارسی را در کادر متن بنویسید")
 
-    engine = get_engine()
+    engine = get_engine("pocket")
     pace = float(min(max(req.pace, 0.6), 1.5))
-    with _engine_lock:
+    with _engine_locks["pocket"]:
         audio = engine.synthesize(phonemes, voice_path(req.voice), pace=pace)
 
     if len(audio) == 0:
         raise HTTPException(400, "صوتی تولید نشد")
-    duration = len(audio) / SR
+    duration = len(audio) / engine.sample_rate
     buf = io.BytesIO()
-    sf.write(buf, audio, SR, format="WAV")
+    sf.write(buf, audio, engine.sample_rate, format="WAV")
     audio_id = uuid.uuid4().hex[:12]
     with _store_lock:
         _audio_store[audio_id] = {
@@ -216,62 +282,80 @@ def tts(req: TTSRequest):
     if len(text) > MAX_TEXT:
         raise HTTPException(400, f"متن طولانی است (حداکثر {MAX_TEXT} نویسه)")
 
-    engine = get_engine()
+    eng = get_engine(req.engine)
+    sr = eng.sample_rate
     pace = float(min(max(req.pace, 0.6), 1.5))
-    if req.mode not in ("split", "pack"):
-        raise HTTPException(400, "حالت گفتار باید split یا pack باشد")
-    phonemes_all, chunks = [], []
+    with _engine_locks[req.engine]:
+        if req.engine == "chatterbox":
+            # raw Persian text in — the engine does its own sentence
+            # splitting, early-stop retries and sentence pauses
+            audio = eng.synthesize_text(text, voice_path(req.voice), pace=pace)
+            phonemes = ""
+        else:
+            audio, phonemes = _tts_pocket(eng, req, pace)
 
-    with _engine_lock:
-        for sent in split_sentences(text):
-            # punctuation-aware plan: each phrase (comma/dash/colon-delimited)
-            # is a pause unit with its own gap, and short lead-ins ending in
-            # strong punctuation ("سؤال اصلی:") stay standalone
-            try:
-                plan = plan_phrases(sent, engine._g2p, engine.sp)
-            except ValueError as e:
-                raise HTTPException(400, "متن فارسی معتبری پیدا نشد") from e
-            if req.mode == "pack":
-                plan = pack_phrases(plan)
-            if not plan:
-                continue
-            # model card: retry a runaway once (stochastic; 2nd attempt usually ends)
-            tokens = sum(len(engine.sp.encode(p.replace("1", ""), out_type=int))
-                         for p, _ in plan)
-            cap = tokens / engine.tps_est + engine.gen_pad + 1
-            for attempt in range(2):
-                audio = engine.synthesize(plan, voice_path(req.voice), pace=pace)
-                if len(audio) / SR <= cap + 2.0:  # multi-chunk texts run longer
-                    break
-            phonemes_all.append(" ".join(p.replace("1", "") for p, _ in plan))
-            chunks.append(audio)
-            chunks.append(np.zeros(int(PAUSE_S / pace * SR), dtype=audio.dtype))
-
-    if not chunks:
-        raise HTTPException(400, "متنی برای ساخت صدا پیدا نشد")
-    audio = np.concatenate(chunks[:-1])  # drop trailing pause
-    duration = len(audio) / SR
-
+    if len(audio) == 0:
+        raise HTTPException(400, "صوتی تولید نشد")
+    duration = len(audio) / sr
     buf = io.BytesIO()
-    sf.write(buf, audio, SR, format="WAV")
+    sf.write(buf, audio, sr, format="WAV")
     audio_id = uuid.uuid4().hex[:12]
     with _store_lock:
         _audio_store[audio_id] = {
             "wav": buf.getvalue(),
             "text": text,
             "voice": req.voice,
+            "engine": req.engine,
             "duration": duration,
-            "phonemes": " ".join(phonemes_all),
+            "phonemes": phonemes,
         }
     return {
         "id": audio_id,
-        "phonemes": " ".join(phonemes_all),
+        "phonemes": phonemes,
         "duration": round(duration, 2),
         "pace": pace,
         "mode": req.mode,
-        "sentences": len(phonemes_all),
+        "sentences": len(split_sentences(text)),
+        "engine": req.engine,
         "elapsed": None,
     }
+
+
+def _tts_pocket(engine, req: TTSRequest, pace: float):
+    """The original pocket pipeline: punctuation-aware phrase plans, the
+    runaway retry and the sentence pauses. -> (audio, phonemes string)."""
+    if req.mode not in ("split", "pack"):
+        raise HTTPException(400, "حالت گفتار باید split یا pack باشد")
+    phonemes_all, chunks = [], []
+    sr = engine.sample_rate
+
+    for sent in split_sentences(req.text.strip()):
+        # punctuation-aware plan: each phrase (comma/dash/colon-delimited)
+        # is a pause unit with its own gap, and short lead-ins ending in
+        # strong punctuation ("سؤال اصلی:") stay standalone
+        try:
+            plan = plan_phrases(sent, engine._g2p, engine.sp)
+        except ValueError as e:
+            raise HTTPException(400, "متن فارسی معتبری پیدا نشد") from e
+        if req.mode == "pack":
+            plan = pack_phrases(plan)
+        if not plan:
+            continue
+        # model card: retry a runaway once (stochastic; 2nd attempt usually ends)
+        tokens = sum(len(engine.sp.encode(p.replace("1", ""), out_type=int))
+                     for p, _ in plan)
+        cap = tokens / engine.tps_est + engine.gen_pad + 1
+        for attempt in range(2):
+            audio = engine.synthesize(plan, voice_path(req.voice), pace=pace)
+            if len(audio) / sr <= cap + 2.0:  # multi-chunk texts run longer
+                break
+        phonemes_all.append(" ".join(p.replace("1", "") for p, _ in plan))
+        chunks.append(audio)
+        chunks.append(np.zeros(int(PAUSE_S / pace * sr), dtype=audio.dtype))
+
+    if not chunks:
+        raise HTTPException(400, "متنی برای ساخت صدا پیدا نشد")
+    return np.concatenate(chunks[:-1]), " ".join(phonemes_all)  # drop trailing pause
 
 
 @app.get("/api/audio/{audio_id}")
@@ -312,7 +396,20 @@ if __name__ == "__main__":
     # unauthenticated demo (disk-writing upload included) — opt in
     host = os.environ.get("PARSIGO_HOST", "127.0.0.1")
     port = int(os.environ.get("PARSIGO_PORT", "8000"))
-    print("loading engine (first request may take a moment)...")
-    get_engine()
+    print("loading pocket engine (first request may take a moment)...")
+    get_engine("pocket")   # chatterbox loads lazily: GBs of weights + gated repo
+    if not os.environ.get("PARSIGO_NO_PRELOAD"):
+        # warm the chatterbox engine in the background: ~20-60 s of weights
+        # + conditioning graphs would otherwise land on the FIRST request
+        # (opt out with PARSIGO_NO_PRELOAD=1 on tight-RAM boxes)
+        def _preload():
+            if not engine_available("chatterbox"):
+                return   # engine code/weights not present in this install
+            try:
+                get_engine("chatterbox")
+                print("chatterbox engine preloaded (warm)")
+            except Exception as e:   # gated repo missing etc. — stay up
+                print(f"chatterbox preload skipped: {e}")
+        threading.Thread(target=_preload, daemon=True).start()
     print(f"demo:  http://{host}:{port}")
     uvicorn.run(app, host=host, port=port, log_level="warning")
